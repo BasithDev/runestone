@@ -1,56 +1,87 @@
-# Welcome to your Expo app 👋
+# Runestone
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Runestone is a high-fidelity, local-first cinephile tracking application designed to catalogue and monitor personal viewings of Movies, TV Shows, Anime, and Documentaries. Unlike public platform alternatives, Runestone integrates all media platforms into a single, unified local environment with custom annotations, tracking priority queues, and granular episode-level watch counters.
 
-## Get started
+---
 
-1. Install dependencies
+## Project Details
 
+### Vision and Framework
+The application is built on Expo (React Native) utilizing NativeWind v4 (Tailwind CSS engine) for custom layouts and standard React Native Animated APIs to achieve 120 FPS UI-thread animations.
+
+### Feature Specification
+* **TMDb Query Integration:** Unified search endpoint fetching posters, backdrops, cast directories, runtimes, and season/episode metadata.
+* **Granular Watch Statuses:** Support for six core states:
+  * Watching
+  * Completed
+  * On Hold (requires text annotations explaining the hold rationale)
+  * Dropped (custom rating out of 10.0 and reasons for dropping)
+  * Plan to Watch
+  * Rewatching
+* **Episode Progress Tracker:** Interactive season and episode watch counters with dashboard quick-increment tools.
+* **Smart Watchlist:** Media queue equipped with custom priority levels (High, Medium, Low), added timestamps, and "Why Added" descriptors.
+* **Cinephile Analytics:** Detailed statistics screen calculating global watch-time metrics, genre density, director completed lists, and media format distributions.
+
+---
+
+## Installation
+
+### Prerequisites
+* Node.js (v18 or higher recommended)
+* npm (v9 or higher) or Yarn
+* Expo Go app installed on your testing device (iOS/Android) or active emulators
+
+### Step-by-Step Setup
+1. **Install Dependencies:**
+   Install required node modules and peer dependencies.
    ```bash
    npm install
    ```
 
-2. Start the app
-
-   ```bash
-   npx expo start
+2. **Configure Environment Variables:**
+   Create a `.env` file in the root directory to store your TMDb API credentials securely.
+   ```env
+   EXPO_PUBLIC_TMDB_API_KEY=your_tmdb_read_access_token_here
    ```
 
-In the output, you'll find options to open the app in a
+3. **Start the Development Server:**
+   Launch the Metro Bundler. To access your local dev build on a physical device over standard cellular networks, execute the tunnel flag command.
+   ```bash
+   npx expo start --tunnel
+   ```
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+4. **Connect a Device:**
+   Scan the generated QR code in your terminal with your device's camera (iOS) or via the Expo Go application (Android).
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+---
 
-## Get a fresh project
+## Troubleshooting
 
-When you're ready, run:
+### NativeWind CSS Compilation Failures
+* **Symptom:** Utility classes (`className`) applied in components do not alter elements, or styling changes fail to render on-screen.
+* **Resolution:** 
+  1. Verify `metro.config.js` is wrapping your configuration with `withNativeWind`.
+  2. Confirm your `tailwind.config.js` contains the correct scan directory under the `content` block (e.g. `./src/**/*.{js,jsx,ts,tsx}`).
+  3. Clear your cache and restart Metro with the following clean command:
+     ```bash
+     npx expo start -c
+     ```
 
-```bash
-npm run reset-project
-```
+### New Architecture Warnings on Android
+* **Symptom:** Terminal output displays warnings regarding layout configurations: `setLayoutAnimationEnabledExperimental is currently a no-op in the New Architecture`.
+* **Resolution:** Under modern React Native engines (Fabric), native spring animations are integrated. Remove legacy statements invoking `UIManager.setLayoutAnimationEnabledExperimental` in your entry scripts.
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+### TMDb API Access Blocked / Connection Timeout
+* **Symptom:** Search results fail to load or report network request timeout errors.
+* **Resolution:** 
+  1. Ensure your `.env` variable key begins with `EXPO_PUBLIC_` so it is compiled correctly by the Expo CLI.
+  2. If using real mobile devices, confirm both the server and device are connected to active internet access.
+  3. Ensure you are running the server with the `--tunnel` flag if the device and computer are on separate Wi-Fi configurations or cellular systems.
 
-### Other setup steps
-
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+### Package Peer Dependency Conflicts (Legacy Packages)
+* **Symptom:** Running `npm install` reports dependency tree conflicts (e.g., matching React Native Reanimated versions or Moti worklets).
+* **Resolution:** Install packages using the peer-dependency bypass flag:
+   ```bash
+   npm install <package-name> --legacy-peer-deps
+   ```
+   Or utilize standard, built-in React Native `Animated` structures to reduce external bundle overhead and prevent node engine runtime errors.

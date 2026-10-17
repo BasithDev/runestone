@@ -101,6 +101,16 @@ export default function WatchingProgressScreen() {
   const [movieDone, setMovieDone] = useState(item?.movieCompleted ?? false);
   const [saving, setSaving] = useState(false);
 
+  // Sync local state once the item arrives (e.g. context still loading on mount)
+  const syncedRef = useRef(false);
+  useEffect(() => {
+    if (!item || syncedRef.current) return;
+    syncedRef.current = true;
+    setSeason(item.currentSeason || 1);
+    setEpisode(item.currentEpisode || 1);
+    setMovieDone(item.movieCompleted ?? false);
+  }, [item]);
+
   // Fade in
   const fadeIn = useRef(new Animated.Value(0)).current;
   useEffect(() => {

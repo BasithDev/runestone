@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useWatchlist } from '../../context/WatchlistContext';
 import { WatchlistItem } from '../../services/watchlistStore';
+import { parseLocalDate } from '../../types';
 
 const { width } = Dimensions.get('window');
 const IMG_W500 = 'https://image.tmdb.org/t/p/w342';
@@ -32,7 +33,7 @@ function WatchlistCard({ item, onPress }: { item: WatchlistItem; onPress: () => 
       : null;
 
   const dateStr = item.release_date
-    ? new Date(item.release_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    ? parseLocalDate(item.release_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     : '';
 
   const addedStr = new Date(item.added_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });

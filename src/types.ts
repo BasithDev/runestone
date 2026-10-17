@@ -146,3 +146,11 @@ export function detectContentType(
   if (mediaType === 'tv') return 'series';
   return 'other';
 }
+
+// ── Helper: parse TMDb date-only strings as local time ─
+// `new Date('YYYY-MM-DD')` parses as UTC midnight, which shifts the
+// displayed day backwards in timezones west of UTC.
+export function parseLocalDate(dateStr: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+}

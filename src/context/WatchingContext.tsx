@@ -115,7 +115,7 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
     return computeGenreStats(history);
   }, [history]);
 
-  const ctx: WatchingContextType = {
+  const ctx = useMemo<WatchingContextType>(() => ({
     watchingItems,
     awaitingItems,
     history,
@@ -134,7 +134,11 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
     refresh: loadData,
     getPeriodStats,
     getGenreStats,
-  };
+  }), [
+    watchingItems, awaitingItems, history, loading, lifetimeStats, streak, availableYears,
+    startWatching, updateProgressCb, markCompletedCb, markCaughtUpCb, removeCb,
+    isItemWatching, getItemCb, loadData, getPeriodStats, getGenreStats,
+  ]);
 
   return <WatchingContext.Provider value={ctx}>{children}</WatchingContext.Provider>;
 }

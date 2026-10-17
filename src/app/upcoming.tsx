@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { parseLocalDate } from '../types';
 
 interface MediaItem {
   id: number;
@@ -58,7 +59,9 @@ export default function UpcomingScreen() {
           });
 
         setMovies(prev => {
-          const combined = append ? [...prev, ...filtered] : filtered;
+          // TMDb pages can overlap, so dedupe by id
+          const merged: MediaItem[] = append ? [...prev, ...filtered] : filtered;
+          const combined = Array.from(new Map(merged.map(m => [m.id, m])).values());
           // Re-sort the full list to maintain order across pages
           return combined.sort((a: MediaItem, b: MediaItem) => {
             const da = a.release_date ? new Date(a.release_date).getTime() : Infinity;
@@ -89,7 +92,7 @@ export default function UpcomingScreen() {
     const title = item.title || item.name || '';
     const date = item.release_date || item.first_air_date || '';
     const formatted = date
-      ? new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      ? parseLocalDate(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
       : '';
 
     return (

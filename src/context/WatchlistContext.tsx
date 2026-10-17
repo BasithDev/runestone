@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
 import {
   WatchlistItem,
   getWatchlist,
@@ -76,20 +76,20 @@ export function WatchlistProvider({ children }: { children: ReactNode }) {
     [refresh]
   );
 
-  const stats = getWatchlistStats(watchlist);
+  const stats = useMemo(() => getWatchlistStats(watchlist), [watchlist]);
+
+  const value = useMemo(() => ({
+    watchlist,
+    loading,
+    stats,
+    isInWatchlist: isInWatchlistSync,
+    addItem,
+    removeItem,
+    refresh,
+  }), [watchlist, loading, stats, isInWatchlistSync, addItem, removeItem, refresh]);
 
   return (
-    <WatchlistContext.Provider
-      value={{
-        watchlist,
-        loading,
-        stats,
-        isInWatchlist: isInWatchlistSync,
-        addItem,
-        removeItem,
-        refresh,
-      }}
-    >
+    <WatchlistContext.Provider value={value}>
       {children}
     </WatchlistContext.Provider>
   );

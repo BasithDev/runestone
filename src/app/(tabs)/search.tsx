@@ -55,6 +55,81 @@ const chipToMediaType: Record<ChipType, string | null> = {
   Others: null,
 };
 
+// ── Result row component ─────────────────────────────
+function ResultRow({ item, isSaved, onToggleSave }: {
+  item: MediaItem;
+  isSaved: boolean;
+  onToggleSave: (item: MediaItem) => void;
+}) {
+  const router = useRouter();
+  const title = item.title || item.name || 'Untitled';
+  const hasRating = item.vote_average > 0;
+  const rating = hasRating ? item.vote_average.toFixed(1) : null;
+  const voteCount = item.vote_count ?? 0;
+  const plot = item.overview || 'No description available.';
+  const mediaType = item.media_type || (item.title ? 'movie' : 'tv');
+
+  // Format vote count: 1200 → 1.2k
+  const formatVotes = (n: number) => {
+    if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+    return String(n);
+  };
+
+  return (
+    <Pressable
+      style={styles.resultRow}
+      onPress={() => router.push({ pathname: '/content/[id]', params: { id: item.id, media_type: mediaType } } as any)}
+    >
+      {/* Poster */}
+      <View style={styles.posterContainer}>
+        <Image
+          source={{ uri: `${TMDB_IMG}${item.poster_path}` }}
+          style={styles.poster}
+          resizeMode="cover"
+        />
+      </View>
+
+      {/* Info */}
+      <View style={styles.infoContainer}>
+        <Text style={styles.resultTitle} numberOfLines={2}>{title}</Text>
+        <Text style={styles.resultPlot} numberOfLines={5}>{plot}</Text>
+        <View style={styles.ratingRow}>
+          {hasRating ? (
+            <>
+              <View style={styles.ratingBadge}>
+                <Ionicons name="star" size={10} color="#10B981" />
+                <Text style={styles.ratingText}>{rating}</Text>
+              </View>
+              {voteCount > 0 && (
+                <Text style={styles.dateText}>({formatVotes(voteCount)})</Text>
+              )}
+            </>
+          ) : (
+            <Text style={styles.noRatingText}>No ratings</Text>
+          )}
+          {item.release_date || item.first_air_date ? (
+            <Text style={styles.dateText}>
+              {(item.release_date || item.first_air_date || '').slice(0, 4)}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+
+      {/* Save button */}
+      <Pressable
+        style={[styles.saveButton, isSaved && styles.saveButtonActive]}
+        onPress={(e) => { e.stopPropagation(); onToggleSave(item); }}
+      >
+        <Ionicons
+          name={isSaved ? 'bookmark' : 'bookmark-outline'}
+          size={18}
+          color={isSaved ? '#10B981' : '#71717A'}
+        />
+      </Pressable>
+    </Pressable>
+  );
+}
+
 export default function SearchScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -325,77 +400,6 @@ export default function SearchScreen() {
     setModalItem(null);
   }, [modalItem, addItem]);
 
-  // ── Result row component ─────────────────────────────
-  const ResultRow = ({ item }: { item: MediaItem }) => {
-    const title = item.title || item.name || 'Untitled';
-    const hasRating = item.vote_average > 0;
-    const rating = hasRating ? item.vote_average.toFixed(1) : null;
-    const voteCount = item.vote_count ?? 0;
-    const plot = item.overview || 'No description available.';
-    const mediaType = item.media_type || (item.title ? 'movie' : 'tv');
-    const isSaved = isInWatchlist(item.id, mediaType);
-
-    // Format vote count: 1200 → 1.2k
-    const formatVotes = (n: number) => {
-      if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-      return String(n);
-    };
-
-    return (
-      <Pressable
-        style={styles.resultRow}
-        onPress={() => router.push({ pathname: '/content/[id]', params: { id: item.id, media_type: mediaType } } as any)}
-      >
-        {/* Poster */}
-        <View style={styles.posterContainer}>
-          <Image
-            source={{ uri: `${TMDB_IMG}${item.poster_path}` }}
-            style={styles.poster}
-            resizeMode="cover"
-          />
-        </View>
-
-        {/* Info */}
-        <View style={styles.infoContainer}>
-          <Text style={styles.resultTitle} numberOfLines={2}>{title}</Text>
-          <Text style={styles.resultPlot} numberOfLines={5}>{plot}</Text>
-          <View style={styles.ratingRow}>
-            {hasRating ? (
-              <>
-                <View style={styles.ratingBadge}>
-                  <Ionicons name="star" size={10} color="#10B981" />
-                  <Text style={styles.ratingText}>{rating}</Text>
-                </View>
-                {voteCount > 0 && (
-                  <Text style={styles.dateText}>({formatVotes(voteCount)})</Text>
-                )}
-              </>
-            ) : (
-              <Text style={styles.noRatingText}>No ratings</Text>
-            )}
-            {item.release_date || item.first_air_date ? (
-              <Text style={styles.dateText}>
-                {new Date(item.release_date || item.first_air_date || '').getFullYear()}
-              </Text>
-            ) : null}
-          </View>
-        </View>
-
-        {/* Save button */}
-        <Pressable
-          style={[styles.saveButton, isSaved && styles.saveButtonActive]}
-          onPress={(e) => { e.stopPropagation(); handleToggleWatchlist(item); }}
-        >
-          <Ionicons
-            name={isSaved ? 'bookmark' : 'bookmark-outline'}
-            size={18}
-            color={isSaved ? '#10B981' : '#71717A'}
-          />
-        </Pressable>
-      </Pressable>
-    );
-  };
-
   // ── Render Trending Section (Fallback) ───────────────
   const renderTrendingSection = () => {
     if (loadingTrending) {
@@ -568,7 +572,13 @@ export default function SearchScreen() {
         <FlatList
           data={results}
           keyExtractor={(item) => `${item.media_type || 'x'}-${item.id}`}
-          renderItem={({ item }) => <ResultRow item={item} />}
+          renderItem={({ item }) => (
+            <ResultRow
+              item={item}
+              isSaved={isInWatchlist(item.id, item.media_type || (item.title ? 'movie' : 'tv'))}
+              onToggleSave={handleToggleWatchlist}
+            />
+          )}
           contentContainerStyle={{
             paddingHorizontal: 20,
             paddingBottom: 100,

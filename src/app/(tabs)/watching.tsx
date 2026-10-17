@@ -208,6 +208,8 @@ function SeriesCard({ item, onPress }: { item: WatchingItem; onPress: () => void
 // ── Awaiting Card ─────────────────────────────────────
 function AwaitingCard({ item, onPress }: { item: WatchingItem; onPress: () => void }) {
   const typeCfg = getTypeConfig(itemType(item));
+  const seasonEps = item.seasonEpisodes?.find(s => s.season === item.currentSeason)?.episodes;
+  const seasonComplete = !!seasonEps && (item.currentEpisode ?? 0) >= seasonEps;
 
   return (
     <Pressable style={[s.card, s.awaitingCard]} onPress={onPress}>
@@ -233,9 +235,15 @@ function AwaitingCard({ item, onPress }: { item: WatchingItem; onPress: () => vo
 
           {/* Last season info */}
           <View style={s.episodeRow}>
-            <Ionicons name="checkmark-done" size={13} color="#10B981" />
+            <Ionicons
+              name={seasonComplete ? 'checkmark-done' : 'layers-outline'}
+              size={13}
+              color={seasonComplete ? '#10B981' : '#A1A1AA'}
+            />
             <Text style={s.episodeText}>
-              Season {item.currentSeason} complete
+              {seasonComplete
+                ? `Season ${item.currentSeason} complete`
+                : `Stopped at S${item.currentSeason} E${item.currentEpisode}`}
             </Text>
           </View>
 
@@ -354,9 +362,9 @@ export default function WatchingScreen() {
             {filteredWatching.map(item => {
               const goToProgress = () => router.push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } } as any);
               if (item.contentType === 'movie') {
-                return <MovieCard key={item.tmdbId} item={item} onPress={goToProgress} />;
+                return <MovieCard key={`${item.mediaType}-${item.tmdbId}`} item={item} onPress={goToProgress} />;
               }
-              return <SeriesCard key={item.tmdbId} item={item} onPress={goToProgress} />;
+              return <SeriesCard key={`${item.mediaType}-${item.tmdbId}`} item={item} onPress={goToProgress} />;
             })}
           </View>
         )}
@@ -373,7 +381,7 @@ export default function WatchingScreen() {
             </View>
 
             {filteredAwaiting.map(item => (
-              <AwaitingCard key={item.tmdbId} item={item} onPress={() => router.push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } } as any)} />
+              <AwaitingCard key={`${item.mediaType}-${item.tmdbId}`} item={item} onPress={() => router.push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } } as any)} />
             ))}
           </View>
         )}

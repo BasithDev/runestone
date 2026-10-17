@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useWatchlist } from '../../context/WatchlistContext';
 import { useWatching } from '../../context/WatchingContext';
-import { detectContentType, SeasonBreakdown } from '../../types';
+import { detectContentType, parseLocalDate, SeasonBreakdown } from '../../types';
 
 const KEY = process.env.EXPO_PUBLIC_TMDB_API_KEY;
 const IMG_W500 = 'https://image.tmdb.org/t/p/w500';
@@ -339,7 +339,7 @@ export default function ContentDetailsScreen() {
   const year = (details.release_date || details.first_air_date || '').slice(0, 4);
   const rawDate = details.release_date || details.first_air_date || '';
   const releaseDate = rawDate
-    ? new Date(rawDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    ? parseLocalDate(rawDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     : null;
   const runtime = type === 'movie'
     ? (details.runtime ? fmtRuntime(details.runtime) : null)
@@ -481,7 +481,7 @@ export default function ContentDetailsScreen() {
                       <Text style={s.seasonEps}>{sn.episode_count} eps</Text>
                       {sn.air_date ? (
                         <Text style={s.seasonDate}>
-                          {new Date(sn.air_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                          {parseLocalDate(sn.air_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
                         </Text>
                       ) : null}
                     </View>

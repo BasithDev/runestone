@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useWatching } from '../../context/WatchingContext';
+import { parseLocalDate } from '../../types';
 
 // ── Types ──────────────────────────────────────────────
 interface MediaItem {
@@ -36,6 +37,55 @@ const CARD_W = 150;
 const CARD_H = 220;
 const CARD_GAP = 12;
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// ── Skeleton card ──────────────────────────────────────
+function Skeleton({ shimmer }: { shimmer: Animated.Value }) {
+  return (
+    <Animated.View
+      className="rounded-2xl overflow-hidden bg-surface-light border border-white/5"
+      style={{ width: CARD_W, height: CARD_H, opacity: shimmer, marginRight: CARD_GAP }}
+    />
+  );
+}
+
+// ── Poster card ────────────────────────────────────────
+function PosterCard({ item }: { item: MediaItem }) {
+  const router = useRouter();
+  const title = item.title || item.name || '';
+  const date = item.release_date || item.first_air_date || '';
+  const month = date ? parseLocalDate(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+  const mediaType = item.media_type || (item.title ? 'movie' : 'tv');
+
+  return (
+    <Pressable
+      style={{ marginRight: CARD_GAP }}
+      onPress={() => router.push({ pathname: '/content/[id]', params: { id: item.id, media_type: mediaType } } as any)}
+    >
+      <View
+        className="rounded-2xl overflow-hidden bg-surface-light border border-white/5"
+        style={{ width: CARD_W, height: CARD_H }}
+      >
+        <Image
+          source={{ uri: `${TMDB_IMG}${item.poster_path}` }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+        />
+        <LinearGradient
+          colors={['transparent', 'rgba(0,0,0,0.85)']}
+          locations={[0.45, 1]}
+          style={[StyleSheet.absoluteFill, { justifyContent: 'flex-end', padding: 12 }]}
+        >
+          <Text className="text-white text-[13px] font-bold mb-1" numberOfLines={1}>{title}</Text>
+          {month ? (
+            <View className="flex-row items-center py-0.5 rounded-full gap-1">
+              <Text className="text-zinc-300 text-[10px] font-bold">{month}</Text>
+            </View>
+          ) : null}
+        </LinearGradient>
+      </View>
+    </Pressable>
+  );
+}
 
 
 export default function HomeScreen() {
@@ -125,52 +175,6 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // ── Skeleton card ────────────────────────────────────
-  const Skeleton = () => (
-    <Animated.View
-      className="rounded-2xl overflow-hidden bg-surface-light border border-white/5"
-      style={{ width: CARD_W, height: CARD_H, opacity: shimmer, marginRight: CARD_GAP }}
-    />
-  );
-
-  // ── Poster card ──────────────────────────────────────
-  const PosterCard = ({ item }: { item: MediaItem }) => {
-    const title = item.title || item.name || '';
-    const date = item.release_date || item.first_air_date || '';
-    const month = date ? new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
-    const mediaType = item.media_type || (item.title ? 'movie' : 'tv');
-
-    return (
-      <Pressable
-        style={{ marginRight: CARD_GAP }}
-        onPress={() => router.push({ pathname: '/content/[id]', params: { id: item.id, media_type: mediaType } } as any)}
-      >
-        <View
-          className="rounded-2xl overflow-hidden bg-surface-light border border-white/5"
-          style={{ width: CARD_W, height: CARD_H }}
-        >
-          <Image
-            source={{ uri: `${TMDB_IMG}${item.poster_path}` }}
-            style={StyleSheet.absoluteFill}
-            resizeMode="cover"
-          />
-          <LinearGradient
-            colors={['transparent', 'rgba(0,0,0,0.85)']}
-            locations={[0.45, 1]}
-            style={[StyleSheet.absoluteFill, { justifyContent: 'flex-end', padding: 12 }]}
-          >
-            <Text className="text-white text-[13px] font-bold mb-1" numberOfLines={1}>{title}</Text>
-            {month ? (
-              <View className="flex-row items-center py-0.5 rounded-full gap-1">
-                <Text className="text-zinc-300 text-[10px] font-bold">{month}</Text>
-              </View>
-            ) : null}
-          </LinearGradient>
-        </View>
-      </Pressable>
-    );
-  };
-
   return (
     <ScrollView
       className="flex-1 bg-black"
@@ -226,7 +230,7 @@ export default function HomeScreen() {
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ paddingHorizontal: 20 }}
-            renderItem={() => <Skeleton />}
+            renderItem={() => <Skeleton shimmer={shimmer} />}
           />
         ) : error ? (
           <View className="mx-5 bg-surface rounded-2xl border border-white/5 p-7 items-center">
@@ -282,7 +286,7 @@ export default function HomeScreen() {
         {watchingItems.length > 0 ? (
           <FlatList
             data={watchingItems.slice(0, 5)}
-            keyExtractor={(item) => `w-${item.tmdbId}`}
+            keyExtractor={(item) => `${item.mediaType}-${item.tmdbId}`}
             horizontal
             showsHorizontalScrollIndicator={false}
             renderItem={({ item }) => {

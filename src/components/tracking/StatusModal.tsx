@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Modal, View, Text, TextInput, Pressable, StyleSheet,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -31,10 +31,10 @@ export default function StatusModal({ visible, mode, title, onCancel, onConfirm 
     setRating(r => Math.max(0, Math.min(10, (r ?? 5) + d)));
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onCancel}>
       <KeyboardAvoidingView
         style={m.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior="padding"
       >
         <View style={m.card}>
           <Text style={m.title}>{isDrop ? 'Drop' : 'Put On Hold'}</Text>

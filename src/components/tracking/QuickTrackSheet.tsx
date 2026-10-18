@@ -1,10 +1,10 @@
 // Quick-track sheet: pick what to do with a title straight from search results.
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, Animated, Dimensions, Easing, KeyboardAvoidingView, Modal, PanResponder, Platform,
+  Alert, Animated, Dimensions, Easing, KeyboardAvoidingView, Modal, PanResponder,
   Pressable, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useGuardedPush } from '../navGuard';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWatching } from '../../context/WatchingContext';
@@ -79,7 +79,7 @@ type RunKey =
   | 'watchlist' | 'upcoming' | 'hold' | 'drop' | 'resume' | 'remove';
 
 export default function QuickTrackSheet({ visible, target, onClose, onDone, onOpenDetails }: QuickTrackSheetProps) {
-  const router = useRouter();
+  const push = useGuardedPush();
   const insets = useSafeAreaInsets();
   const {
     startWatching, updateProgress, markCompleted, markCaughtUp, resume, putOnHold, dropItem, remove,
@@ -364,7 +364,7 @@ export default function QuickTrackSheet({ visible, target, onClose, onDone, onOp
     if (!target) return;
     onOpenDetails?.(target);
     onClose();
-    router.push({ pathname: '/content/[id]', params: { id: target.tmdbId, media_type: target.mediaType } } as any);
+    push({ pathname: '/content/[id]', params: { id: target.tmdbId, media_type: target.mediaType } });
   };
 
   const toggleFrom = useCallback(() => setShowFrom(v => !v), []);
@@ -408,7 +408,7 @@ export default function QuickTrackSheet({ visible, target, onClose, onDone, onOp
             <KeyboardAvoidingView
               style={s.kav}
               pointerEvents="box-none"
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              behavior="padding"
             >
               <Animated.View
                 style={[s.sheet, { paddingBottom: insets.bottom + 16, transform: [{ translateY: slide }] }]}
@@ -598,6 +598,7 @@ const s = StyleSheet.create({
     borderTopLeftRadius: 28, borderTopRightRadius: 28,
     borderWidth: StyleSheet.hairlineWidth, borderBottomWidth: 0, borderColor: 'rgba(255,255,255,0.08)',
     maxHeight: MAX_H,
+    flexShrink: 1,
     overflow: 'hidden',
   },
   body: { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 4, gap: 12 },

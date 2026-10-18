@@ -1,6 +1,7 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GenreOption } from './useGenres';
 import { DEFAULT_FILTERS, LANGUAGES, RATINGS, SORTS, SearchFilters } from './types';
 
@@ -40,6 +41,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 /** Bottom sheet with genre, language, rating, sort and year filters. Applied on "Show results". */
 function FiltersSheet({ visible, filters, year, genres, genresLoading, genresError, onRetryGenres, onApply, onClose }: Props) {
+  const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState<SearchFilters>(filters);
   const [draftYear, setDraftYear] = useState<number | null>(year);
 
@@ -61,9 +63,9 @@ function FiltersSheet({ visible, filters, year, genres, genresLoading, genresErr
   const apply = () => { onApply(draft, draftYear); onClose(); };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="slide" statusBarTranslucent onRequestClose={onClose}>
       <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={e => e.stopPropagation()}>
+        <Pressable style={[styles.sheet, { paddingBottom: Math.max(32, insets.bottom + 16) }]} onPress={e => e.stopPropagation()}>
           <View style={styles.handle} />
           <View style={styles.headerRow}>
             <Text style={styles.title}>Filters</Text>

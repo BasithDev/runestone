@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useMemo } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { MONTH_NAMES, PeriodStats, WatchLogEntry } from '../../types';
 import { formatDuration, monthlyActivity } from '../../services/statsInsights';

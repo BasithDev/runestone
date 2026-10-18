@@ -1,10 +1,11 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { ScrollView, Text, View, Pressable, StyleSheet, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useGuardedPush } from '../../components/navGuard';
 import { Ionicons } from '@expo/vector-icons';
 import { useWatching } from '../../context/WatchingContext';
 import { ContentType } from '../../types';
+import { useTabBarPadding } from '../../components/navGuard';
 import { FadeSlide } from '../../components/stats/shared';
 import HeroCard from '../../components/stats/HeroCard';
 import ActivityHeatmap from '../../components/stats/ActivityHeatmap';
@@ -32,7 +33,8 @@ function useStagedMount(stages: number): number {
 
 export default function StatsScreen() {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
+  const push = useGuardedPush();
+  const bottomPad = useTabBarPadding(20);
   const stage = useStagedMount(2);
   const {
     library, watchLog, currentStreak, longestStreak, availableYears,
@@ -50,6 +52,7 @@ export default function StatsScreen() {
   );
   const genreStats = useMemo(() => getGenreStats(), [getGenreStats]);
 
+  const clearMonth = useCallback(() => setSelectedMonth(null), []);
   const isEmpty = library.length === 0 && watchLog.length === 0;
 
   let idx = 0;
@@ -58,14 +61,14 @@ export default function StatsScreen() {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: '#000' }}
-      contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: 110 }}
+      contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: bottomPad }}
       showsVerticalScrollIndicator={false}
     >
       <FadeSlide index={next()}>
         <View style={s.header}>
           <Text style={s.headerTitle}>Stats</Text>
           <Pressable
-            onPress={() => router.push('/backup' as any)}
+            onPress={() => push('/backup')}
             hitSlop={8}
             accessibilityLabel="Backup and restore"
             style={s.backupBtn}
@@ -115,7 +118,7 @@ export default function StatsScreen() {
             <LibraryList
               library={library} watchLog={watchLog} year={selectedYear}
               typeFilter={typeFilter} onTypeFilter={setTypeFilter}
-              month={selectedMonth} onClearMonth={() => setSelectedMonth(null)}
+              month={selectedMonth} onClearMonth={clearMonth}
             />
           </FadeSlide>
           <FadeSlide index={next()}>

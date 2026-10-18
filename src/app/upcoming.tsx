@@ -1,14 +1,17 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { memo, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
-  View, Text, Image, FlatList, Pressable,
+  View, Text, FlatList, Pressable,
   ActivityIndicator, StyleSheet, Dimensions,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
+import { useGuardedPush } from '../components/navGuard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { parseLocalDate, UpcomingItem } from '../types';
 import { tmdbGet, tmdbImage, REGION } from '../services/tmdb';
+import { localDateKey } from '../services/watchingStore';
 import { useUpcoming } from '../context/UpcomingContext';
 import { useWatchlist } from '../context/WatchlistContext';
 
@@ -38,10 +41,7 @@ function localToday(): Date {
 }
 
 function localTodayStr(): string {
-  const d = localToday();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${mm}-${dd}`;
+  return localDateKey();
 }
 
 function daysUntil(dateStr: string): number {
@@ -67,9 +67,68 @@ const byDateAsc = (a: MediaItem, b: MediaItem) => {
   return da.localeCompare(db);
 };
 
+// ── Browse card ───────────────────────────────────────
+interface BrowseCardProps {
+  item: MediaItem;
+  saved: boolean;
+  pending: boolean;
+  onOpen: (id: number, mediaType: string) => void;
+  onToggle: (item: MediaItem) => void;
+}
+
+const BrowseCard = memo(function BrowseCard({ item, saved, pending, onOpen, onToggle }: BrowseCardProps) {
+  const title = item.title || item.name || '';
+  const date = item.release_date || item.first_air_date || '';
+  return (
+    <Pressable style={st.card} onPress={() => onOpen(item.id, 'movie')}>
+      <Image
+        source={{ uri: tmdbImage(item.poster_path, 'w342') ?? undefined }}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        cachePolicy="memory-disk"
+        transition={150}
+        recyclingKey={String(item.id)}
+      />
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.9)']}
+        locations={[0.5, 1]}
+        style={[StyleSheet.absoluteFill, { justifyContent: 'flex-end', padding: 12 }]}
+      >
+        <Text style={st.cardTitle} numberOfLines={2}>{title}</Text>
+        {date ? (
+          <View style={st.dateRow}>
+            <Ionicons name="calendar-outline" size={10} color="#10B981" />
+            <Text style={st.dateText}>{formatDate(date)}</Text>
+          </View>
+        ) : null}
+      </LinearGradient>
+      <Pressable
+        style={[st.bookmark, saved && st.bookmarkActive]}
+        onPress={(e) => { e.stopPropagation(); onToggle(item); }}
+        hitSlop={6}
+        accessibilityLabel={saved ? 'Remove from My Upcoming' : 'Add to My Upcoming'}
+      >
+        {pending ? (
+          <ActivityIndicator size="small" color="#10B981" />
+        ) : (
+          <Ionicons
+            name={saved ? 'bookmark' : 'bookmark-outline'}
+            size={16}
+            color={saved ? '#10B981' : '#fff'}
+          />
+        )}
+      </Pressable>
+    </Pressable>
+  );
+});
+
+const browseKey = (item: MediaItem) => String(item.id);
+const Gap10 = () => <View style={{ height: 10 }} />;
+
 // ── Screen ────────────────────────────────────────────
 export default function UpcomingScreen() {
   const router = useRouter();
+  const push = useGuardedPush();
   const insets = useSafeAreaInsets();
   const { items: saved, isSaved, add, remove } = useUpcoming();
   const { addItem: addToWatchlist, isInWatchlist } = useWatchlist();
@@ -86,6 +145,7 @@ export default function UpcomingScreen() {
   const [pendingIds, setPendingIds] = useState<Set<number>>(new Set());
   const [movingKey, setMovingKey] = useState<string | null>(null);
   const reqCounter = useRef(0);
+  const [attempt, setAttempt] = useState(0);
 
   const fetchUpcoming = async (pageNum: number, append = false) => {
     const reqId = ++reqCounter.current;
@@ -121,7 +181,14 @@ export default function UpcomingScreen() {
     }
   };
 
-  useEffect(() => { fetchUpcoming(1); }, []);
+  useEffect(() => {
+    setLoading(true);
+    setError(false);
+    fetchUpcoming(1);
+    // Invalidate in-flight requests on unmount / retry so they can't set state afterwards.
+    return () => { reqCounter.current++; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attempt]);
 
   const loadMore = () => {
     if (loadingMore || loading || page >= totalPages) return;
@@ -153,53 +220,22 @@ export default function UpcomingScreen() {
     }
   }, [pendingIds, isSaved, add, remove]);
 
-  const openItem = (id: number, mediaType: string) =>
-    router.push({ pathname: '/content/[id]', params: { id, media_type: mediaType } } as any);
+  const openItem = useCallback((id: number, mediaType: string) =>
+    push({ pathname: '/content/[id]', params: { id, media_type: mediaType } }), [push]);
+  const goBack = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/');
+  }, [router]);
 
-  // ── Browse card ──
-  const renderBrowseItem = ({ item }: { item: MediaItem }) => {
-    const title = item.title || item.name || '';
-    const date = item.release_date || item.first_air_date || '';
-    const savedNow = isSaved('movie', item.id);
-
-    return (
-      <Pressable style={st.card} onPress={() => openItem(item.id, 'movie')}>
-        <Image
-          source={{ uri: tmdbImage(item.poster_path, 'w342') ?? undefined }}
-          style={StyleSheet.absoluteFill}
-          resizeMode="cover"
-        />
-        <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.9)']}
-          locations={[0.5, 1]}
-          style={[StyleSheet.absoluteFill, { justifyContent: 'flex-end', padding: 12 }]}
-        >
-          <Text style={st.cardTitle} numberOfLines={2}>{title}</Text>
-          {date ? (
-            <View style={st.dateRow}>
-              <Ionicons name="calendar-outline" size={10} color="#10B981" />
-              <Text style={st.dateText}>{formatDate(date)}</Text>
-            </View>
-          ) : null}
-        </LinearGradient>
-        <Pressable
-          style={[st.bookmark, savedNow && st.bookmarkActive]}
-          onPress={(e) => { e.stopPropagation(); toggleSaved(item); }}
-          hitSlop={6}
-        >
-          {pendingIds.has(item.id) ? (
-            <ActivityIndicator size="small" color="#10B981" />
-          ) : (
-            <Ionicons
-              name={savedNow ? 'bookmark' : 'bookmark-outline'}
-              size={16}
-              color={savedNow ? '#10B981' : '#fff'}
-            />
-          )}
-        </Pressable>
-      </Pressable>
-    );
-  };
+  const renderBrowseItem = useCallback(({ item }: { item: MediaItem }) => (
+    <BrowseCard
+      item={item}
+      saved={isSaved('movie', item.id)}
+      pending={pendingIds.has(item.id)}
+      onOpen={openItem}
+      onToggle={toggleSaved}
+    />
+  ), [isSaved, pendingIds, openItem, toggleSaved]);
 
   // ── My Upcoming data ──
   type Row =
@@ -270,7 +306,7 @@ export default function UpcomingScreen() {
     }
   }, [movingKey, isInWatchlist, addToWatchlist, remove]);
 
-  const renderRow = ({ item: row }: { item: Row }) => {
+  const renderRow = useCallback(({ item: row }: { item: Row }) => {
     if (row.kind === 'header') {
       return <Text style={st.groupHeader}>{row.label}</Text>;
     }
@@ -283,7 +319,7 @@ export default function UpcomingScreen() {
       <View style={st.listCard}>
         <Pressable style={{ flexDirection: 'row', flex: 1 }} onPress={() => openItem(item.tmdbId, item.mediaType)}>
           {posterUri ? (
-            <Image source={{ uri: posterUri }} style={st.listPoster} />
+            <Image source={{ uri: posterUri }} style={st.listPoster} contentFit="cover" cachePolicy="memory-disk" transition={150} recyclingKey={`${item.mediaType}-${item.tmdbId}`} />
           ) : (
             <View style={[st.listPoster, { justifyContent: 'center', alignItems: 'center' }]}>
               <Ionicons name="film-outline" size={22} color="#52525B" />
@@ -326,13 +362,13 @@ export default function UpcomingScreen() {
         </Pressable>
       </View>
     );
-  };
+  }, [movingKey, openItem, moveToWatchlist, remove]);
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
       {/* Header */}
       <View style={[st.header, { paddingTop: insets.top + 10 }]}>
-        <Pressable onPress={() => router.back()} style={st.backBtn}>
+        <Pressable onPress={goBack} style={st.backBtn} accessibilityLabel="Back">
           <Ionicons name="arrow-back" size={20} color="#fff" />
         </Pressable>
         <Text style={st.headerTitle}>Upcoming & Anticipated</Text>
@@ -361,8 +397,11 @@ export default function UpcomingScreen() {
           data={rows}
           keyExtractor={r => r.key}
           renderItem={renderRow}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: 100, flexGrow: 1 }}
-          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 4, paddingBottom: insets.bottom + 40, flexGrow: 1 }}
+          ItemSeparatorComponent={Gap10}
+          initialNumToRender={8}
+          windowSize={7}
+          removeClippedSubviews
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={st.emptyWrap}>
@@ -389,18 +428,31 @@ export default function UpcomingScreen() {
           <Text style={{ color: '#E5E2E1', fontSize: 16, fontWeight: '700', marginTop: 16 }}>
             Failed to load
           </Text>
+          <Pressable onPress={() => setAttempt(n => n + 1)} style={st.emptyBtn}>
+            <Text style={st.emptyBtnText}>Try again</Text>
+          </Pressable>
         </View>
       ) : (
         <FlatList
           key="browse-grid"
           data={movies}
-          keyExtractor={(item) => String(item.id)}
+          keyExtractor={browseKey}
           numColumns={2}
           columnWrapperStyle={{ justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 12 }}
-          contentContainerStyle={{ paddingTop: 12, paddingBottom: 100 }}
+          contentContainerStyle={{ paddingTop: 12, paddingBottom: insets.bottom + 40, flexGrow: 1 }}
           showsVerticalScrollIndicator={false}
           renderItem={renderBrowseItem}
           extraData={saved}
+          initialNumToRender={8}
+          windowSize={7}
+          removeClippedSubviews
+          ListEmptyComponent={
+            <View style={st.emptyWrap}>
+              <Ionicons name="calendar-outline" size={36} color="#3F3F46" />
+              <Text style={[st.emptyTitle, { marginTop: 12 }]}>No upcoming releases</Text>
+              <Text style={st.emptySub}>Nothing announced for your region right now. Check back soon.</Text>
+            </View>
+          }
           onEndReached={loadMore}
           onEndReachedThreshold={0.5}
           ListFooterComponent={

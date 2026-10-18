@@ -1,12 +1,12 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ScrollView, Text, View, Image, Pressable, StyleSheet, Dimensions,
+  FlatList, ScrollView, Text, View, Pressable, StyleSheet,
   Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useGuardedPush, useTabBarPadding } from '../../components/navGuard';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { useWatching } from '../../context/WatchingContext';
 import {
   CONTENT_TYPES,
@@ -14,8 +14,6 @@ import {
   ContentType,
 } from '../../types';
 import { getProgress } from '../../services/watchingStore';
-
-const { width: SW } = Dimensions.get('window');
 
 // ── Type config helpers ───────────────────────────────
 function getTypeConfig(type: ContentType) {
@@ -58,10 +56,11 @@ function getStatusConfig(status: string) {
 }
 
 function timeAgo(dateStr: string): string {
-  const now = new Date();
+  // Calendar days in local time (not 24h blocks), so "Yesterday" means yesterday.
   const date = new Date(dateStr);
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (isNaN(date.getTime())) return '';
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.max(0, Math.round((startOf(new Date()) - startOf(date)) / 86400000));
 
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
@@ -72,24 +71,9 @@ function timeAgo(dateStr: string): string {
 
 // ── Progress Bar ──────────────────────────────────────
 function ProgressBar({ percentage, color }: { percentage: number; color: string }) {
-  const width = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(width, {
-      toValue: percentage,
-      duration: 900,
-      useNativeDriver: false,
-    }).start();
-  }, [percentage]);
-
-  const animatedWidth = width.interpolate({
-    inputRange: [0, 100],
-    outputRange: ['0%', '100%'],
-  });
-
   return (
     <View style={s.progressBg}>
-      <Animated.View style={[s.progressFill, { width: animatedWidth, backgroundColor: color }]} />
+      <View style={[s.progressFill, { width: `${Math.max(0, Math.min(100, percentage))}%`, backgroundColor: color }]} />
     </View>
   );
 }
@@ -119,15 +103,15 @@ function StatusNote({ item }: { item: WatchingItem }) {
 }
 
 // ── Movie Card ────────────────────────────────────────
-function MovieCard({ item, onPress }: { item: WatchingItem; onPress: () => void }) {
+const MovieCard = memo(function MovieCard({ item, onOpen }: { item: WatchingItem; onOpen: (item: WatchingItem) => void }) {
   const statusCfg = getStatusConfig(item.status);
   const typeCfg = getTypeConfig(itemType(item));
 
   return (
-    <Pressable style={s.card} onPress={onPress}>
+    <Pressable style={s.card} onPress={() => onOpen(item)}>
       {/* Poster */}
       <View style={s.posterWrap}>
-        <Image source={{ uri: item.posterUrl || undefined }} style={s.poster} />
+        <Image source={{ uri: item.posterUrl || undefined }} style={s.poster} contentFit="cover" cachePolicy="memory-disk" transition={150} recyclingKey={`${item.mediaType}-${item.tmdbId}`} />
         {/* Completed overlay */}
         {item.movieCompleted && (
           <View style={s.completedOverlay}>
@@ -176,19 +160,19 @@ function MovieCard({ item, onPress }: { item: WatchingItem; onPress: () => void 
       </View>
     </Pressable>
   );
-}
+});
 
 // ── Series/Anime Card ─────────────────────────────────
-function SeriesCard({ item, onPress }: { item: WatchingItem; onPress: () => void }) {
+const SeriesCard = memo(function SeriesCard({ item, onOpen }: { item: WatchingItem; onOpen: (item: WatchingItem) => void }) {
   const typeCfg = getTypeConfig(itemType(item));
   const { watched, total, percent: percentage } = getProgress(item);
   const statusCfg = getStatusConfig(item.status);
 
   return (
-    <Pressable style={s.card} onPress={onPress}>
+    <Pressable style={s.card} onPress={() => onOpen(item)}>
       {/* Poster */}
       <View style={s.posterWrap}>
-        <Image source={{ uri: item.posterUrl || undefined }} style={s.poster} />
+        <Image source={{ uri: item.posterUrl || undefined }} style={s.poster} contentFit="cover" cachePolicy="memory-disk" transition={150} recyclingKey={`${item.mediaType}-${item.tmdbId}`} />
         {/* Percentage overlay */}
         <View style={s.percentOverlay}>
           <Text style={s.percentText}>{percentage}%</Text>
@@ -238,19 +222,19 @@ function SeriesCard({ item, onPress }: { item: WatchingItem; onPress: () => void
       </View>
     </Pressable>
   );
-}
+});
 
 // ── Awaiting Card ─────────────────────────────────────
-function AwaitingCard({ item, onPress }: { item: WatchingItem; onPress: () => void }) {
+const AwaitingCard = memo(function AwaitingCard({ item, onOpen }: { item: WatchingItem; onOpen: (item: WatchingItem) => void }) {
   const typeCfg = getTypeConfig(itemType(item));
   const seasonEps = item.seasonEpisodes?.find(s => s.season === item.currentSeason)?.episodes;
   const seasonComplete = !!seasonEps && (item.currentEpisode ?? 0) >= seasonEps;
 
   return (
-    <Pressable style={[s.card, s.awaitingCard]} onPress={onPress}>
+    <Pressable style={[s.card, s.awaitingCard]} onPress={() => onOpen(item)}>
       {/* Poster */}
       <View style={s.posterWrap}>
-        <Image source={{ uri: item.posterUrl || undefined }} style={[s.poster, { opacity: 0.7 }]} />
+        <Image source={{ uri: item.posterUrl || undefined }} style={[s.poster, { opacity: 0.7 }]} contentFit="cover" cachePolicy="memory-disk" transition={150} recyclingKey={`${item.mediaType}-${item.tmdbId}`} />
         <View style={s.awaitingBadgeOverlay}>
           <Ionicons name="time" size={18} color="#F59E0B" />
         </View>
@@ -296,15 +280,24 @@ function AwaitingCard({ item, onPress }: { item: WatchingItem; onPress: () => vo
       </View>
     </Pressable>
   );
-}
+});
 
 // ── Filter Chips ──────────────────────────────────────
 type FilterType = 'all' | ContentType;
 
 // ── Main Watching Screen ──────────────────────────────
+type Row =
+  | { kind: 'header'; key: string; title: string; color: string; count: number; toggle?: boolean; open?: boolean }
+  | { kind: 'card'; key: string; item: WatchingItem; variant: 'normal' | 'awaiting' }
+  | { kind: 'empty'; key: string };
+
+const rowKey = (r: Row) => r.key;
+const cardKey = (item: WatchingItem) => `${item.mediaType}-${item.tmdbId}`;
+
 export default function WatchingScreen() {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
+  const push = useGuardedPush();
+  const bottomPad = useTabBarPadding(12);
   const [filter, setFilter] = useState<FilterType>('all');
   const { watchingItems, awaitingItems, onHoldItems, droppedItems } = useWatching();
   const [droppedOpen, setDroppedOpen] = useState(false);
@@ -314,177 +307,153 @@ export default function WatchingScreen() {
   const slideUp = useRef(new Animated.Value(30)).current;
 
   useEffect(() => {
-    Animated.parallel([
+    const anim = Animated.parallel([
       Animated.timing(fadeIn, { toValue: 1, duration: 500, useNativeDriver: true }),
       Animated.timing(slideUp, { toValue: 0, duration: 500, useNativeDriver: true }),
-    ]).start();
-  }, []);
+    ]);
+    anim.start();
+    return () => anim.stop();
+  }, [fadeIn, slideUp]);
 
-  // Filter items
-  const filteredWatching = filter === 'all'
-    ? watchingItems
-    : watchingItems.filter(i => i.contentType === filter);
+  const { counts, totalCount } = useMemo(() => {
+    const all = [...watchingItems, ...awaitingItems, ...onHoldItems, ...droppedItems];
+    const c = new Map<ContentType, number>();
+    for (const i of all) c.set(i.contentType, (c.get(i.contentType) ?? 0) + 1);
+    return { counts: c, totalCount: all.length };
+  }, [watchingItems, awaitingItems, onHoldItems, droppedItems]);
 
-  const filteredAwaiting = filter === 'all'
-    ? awaitingItems
-    : awaitingItems.filter(i => i.contentType === filter);
+  // If the selected type no longer has any items (e.g. the last one was removed), fall back to All.
+  useEffect(() => {
+    if (filter !== 'all' && !counts.get(filter)) setFilter('all');
+  }, [filter, counts]);
 
-  const filteredOnHold = filter === 'all'
-    ? onHoldItems
-    : onHoldItems.filter(i => i.contentType === filter);
+  const rows = useMemo(() => {
+    const pick = (list: WatchingItem[]) => (filter === 'all' ? list : list.filter(i => i.contentType === filter));
+    const w = pick(watchingItems), a = pick(awaitingItems), h = pick(onHoldItems), d = pick(droppedItems);
+    const out: Row[] = [];
+    const section = (id: string, title: string, color: string, list: WatchingItem[], variant: 'normal' | 'awaiting', toggle = false, open = true) => {
+      if (list.length === 0) return;
+      out.push({ kind: 'header', key: `h-${id}`, title, color, count: list.length, toggle, open });
+      if (open) for (const item of list) out.push({ kind: 'card', key: `${id}-${cardKey(item)}`, item, variant });
+    };
+    section('progress', 'In Progress', '#3B82F6', w, 'normal');
+    section('awaiting', 'Awaiting New Season', '#F59E0B', a, 'awaiting');
+    section('hold', 'On Hold', '#A1A1AA', h, 'normal');
+    section('dropped', 'Dropped', '#F87171', d, 'normal', true, droppedOpen);
+    if (w.length + a.length + h.length + d.length === 0) out.push({ kind: 'empty', key: 'empty' });
+    return out;
+  }, [filter, watchingItems, awaitingItems, onHoldItems, droppedItems, droppedOpen]);
 
-  const filteredDropped = filter === 'all'
-    ? droppedItems
-    : droppedItems.filter(i => i.contentType === filter);
+  const openProgress = useCallback(
+    (item: WatchingItem) => push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } }),
+    [push],
+  );
+  const toggleDropped = useCallback(() => setDroppedOpen(o => !o), []);
+  const goDiscover = useCallback(() => push('/search'), [push]);
 
-  const allItems = [...watchingItems, ...awaitingItems, ...onHoldItems, ...droppedItems];
-  const totalCount = allItems.length;
-  const visibleCount = filteredWatching.length + filteredAwaiting.length
-    + filteredOnHold.length + filteredDropped.length;
+  const renderRow = useCallback(({ item: r }: { item: Row }) => {
+    if (r.kind === 'header') {
+      const inner = (
+        <>
+          <View style={s.sectionDotRow}>
+            <View style={[s.sectionDot, { backgroundColor: r.color }]} />
+            <Text style={s.sectionTitle}>{r.title}</Text>
+          </View>
+          <View style={s.sectionDotRow}>
+            <Text style={s.sectionCount}>{r.count}</Text>
+            {r.toggle ? <Ionicons name={r.open ? 'chevron-up' : 'chevron-down'} size={16} color="#52525B" /> : null}
+          </View>
+        </>
+      );
+      return r.toggle
+        ? <Pressable style={[s.sectionHeader, s.sectionPad]} onPress={toggleDropped}>{inner}</Pressable>
+        : <View style={[s.sectionHeader, s.sectionPad]}>{inner}</View>;
+    }
+    if (r.kind === 'empty') {
+      return (
+        <View style={s.emptyWrap}>
+          <View style={s.emptyIconCircle}>
+            <Ionicons name="play-circle-outline" size={40} color="#3F3F46" />
+          </View>
+          <Text style={s.emptyTitle}>Nothing here yet</Text>
+          <Text style={s.emptySubtext}>
+            No {filter === 'all' ? 'content' : CONTENT_TYPES.find(c => c.key === filter)?.label.toLowerCase()} being tracked.
+          </Text>
+          <Pressable onPress={goDiscover} style={s.emptyBtn}>
+            <Ionicons name="search" size={15} color="#000" />
+            <Text style={s.emptyBtnText}>Discover Content</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    const wrap = (child: React.ReactElement) => <View style={s.cardPad}>{child}</View>;
+    if (r.variant === 'awaiting') return wrap(<AwaitingCard item={r.item} onOpen={openProgress} />);
+    return wrap(r.item.mediaType === 'movie'
+      ? <MovieCard item={r.item} onOpen={openProgress} />
+      : <SeriesCard item={r.item} onOpen={openProgress} />);
+  }, [filter, openProgress, toggleDropped, goDiscover]);
 
-  const openProgress = (item: WatchingItem) =>
-    router.push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } } as any);
-  const renderCard = (item: WatchingItem) =>
-    item.mediaType === 'movie'
-      ? <MovieCard key={`${item.mediaType}-${item.tmdbId}`} item={item} onPress={() => openProgress(item)} />
-      : <SeriesCard key={`${item.mediaType}-${item.tmdbId}`} item={item} onPress={() => openProgress(item)} />;
-
-  return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: '#000' }}
-      contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: 100 }}
-      showsVerticalScrollIndicator={false}
-    >
-      <Animated.View style={{ opacity: fadeIn, transform: [{ translateY: slideUp }] }}>
-
-        {/* ── Header ──────────────────────────────────── */}
-        <View style={s.header}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <Text style={s.headerTitle}>Currently Watching</Text>
-            <View style={s.countBadge}>
-              <Text style={s.countBadgeText}>{totalCount}</Text>
-            </View>
+  const header = useMemo(() => (
+    <Animated.View style={{ opacity: fadeIn, transform: [{ translateY: slideUp }] }}>
+      {/* ── Header ──────────────────────────────────── */}
+      <View style={s.header}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Text style={s.headerTitle}>Currently Watching</Text>
+          <View style={s.countBadge}>
+            <Text style={s.countBadgeText}>{totalCount}</Text>
           </View>
         </View>
+      </View>
 
-        {/* ── Filter Chips ────────────────────────────── */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 20, gap: 8, marginBottom: 20 }}
+      {/* ── Filter Chips ────────────────────────────── */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 20, gap: 8, marginBottom: 20 }}
+      >
+        <Pressable
+          style={[s.filterChip, filter === 'all' && s.filterChipActive]}
+          onPress={() => setFilter('all')}
         >
-          <Pressable
-            style={[s.filterChip, filter === 'all' && s.filterChipActive]}
-            onPress={() => setFilter('all')}
-          >
-            <Text style={[s.filterChipText, filter === 'all' && s.filterChipTextActive]}>All</Text>
-          </Pressable>
-          {CONTENT_TYPES.map(ct => {
-            const count = allItems.filter(i => i.contentType === ct.key).length;
-            if (count === 0) return null;
-            return (
-              <Pressable
-                key={ct.key}
-                style={[s.filterChip, filter === ct.key && { backgroundColor: ct.color + '20', borderColor: ct.color + '40' }]}
-                onPress={() => setFilter(ct.key)}
-              >
-                <Ionicons name={ct.icon as any} size={13} color={filter === ct.key ? ct.color : '#71717A'} />
-                <Text style={[s.filterChipText, filter === ct.key && { color: ct.color }]}>
-                  {ct.label}
-                </Text>
-                <View style={[s.filterCount, filter === ct.key && { backgroundColor: ct.color + '30' }]}>
-                  <Text style={[s.filterCountText, filter === ct.key && { color: ct.color }]}>{count}</Text>
-                </View>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        {/* ── Active Watching Section ─────────────────── */}
-        {filteredWatching.length > 0 && (
-          <View style={s.sectionWrap}>
-            <View style={s.sectionHeader}>
-              <View style={s.sectionDotRow}>
-                <View style={[s.sectionDot, { backgroundColor: '#3B82F6' }]} />
-                <Text style={s.sectionTitle}>In Progress</Text>
-              </View>
-              <Text style={s.sectionCount}>{filteredWatching.length}</Text>
-            </View>
-
-            {filteredWatching.map(renderCard)}
-          </View>
-        )}
-
-        {/* ── Awaiting New Season Section ─────────────── */}
-        {filteredAwaiting.length > 0 && (
-          <View style={s.sectionWrap}>
-            <View style={s.sectionHeader}>
-              <View style={s.sectionDotRow}>
-                <View style={[s.sectionDot, { backgroundColor: '#F59E0B' }]} />
-                <Text style={s.sectionTitle}>Awaiting New Season</Text>
-              </View>
-              <Text style={s.sectionCount}>{filteredAwaiting.length}</Text>
-            </View>
-
-            {filteredAwaiting.map(item => (
-              <AwaitingCard key={`${item.mediaType}-${item.tmdbId}`} item={item} onPress={() => router.push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } } as any)} />
-            ))}
-          </View>
-        )}
-
-        {/* ── On Hold Section ─────────────────────────── */}
-        {filteredOnHold.length > 0 && (
-          <View style={s.sectionWrap}>
-            <View style={s.sectionHeader}>
-              <View style={s.sectionDotRow}>
-                <View style={[s.sectionDot, { backgroundColor: '#A1A1AA' }]} />
-                <Text style={s.sectionTitle}>On Hold</Text>
-              </View>
-              <Text style={s.sectionCount}>{filteredOnHold.length}</Text>
-            </View>
-            {filteredOnHold.map(renderCard)}
-          </View>
-        )}
-
-        {/* ── Dropped Section (collapsed by default) ──── */}
-        {filteredDropped.length > 0 && (
-          <View style={s.sectionWrap}>
-            <Pressable style={s.sectionHeader} onPress={() => setDroppedOpen(o => !o)}>
-              <View style={s.sectionDotRow}>
-                <View style={[s.sectionDot, { backgroundColor: '#F87171' }]} />
-                <Text style={s.sectionTitle}>Dropped</Text>
-              </View>
-              <View style={s.sectionDotRow}>
-                <Text style={s.sectionCount}>{filteredDropped.length}</Text>
-                <Ionicons name={droppedOpen ? 'chevron-up' : 'chevron-down'} size={16} color="#52525B" />
-              </View>
-            </Pressable>
-            {droppedOpen && filteredDropped.map(renderCard)}
-          </View>
-        )}
-
-        {/* ── Empty state when filter has no results ──── */}
-        {visibleCount === 0 && (
-          <View style={s.emptyWrap}>
-            <View style={s.emptyIconCircle}>
-              <Ionicons name="play-circle-outline" size={40} color="#3F3F46" />
-            </View>
-            <Text style={s.emptyTitle}>Nothing here yet</Text>
-            <Text style={s.emptySubtext}>
-              No {filter === 'all' ? 'content' : CONTENT_TYPES.find(c => c.key === filter)?.label.toLowerCase()} being tracked.
-            </Text>
+          <Text style={[s.filterChipText, filter === 'all' && s.filterChipTextActive]}>All</Text>
+        </Pressable>
+        {CONTENT_TYPES.map(ct => {
+          const count = counts.get(ct.key) ?? 0;
+          if (count === 0) return null;
+          return (
             <Pressable
-              onPress={() => router.replace('/search' as any)}
-              style={s.emptyBtn}
+              key={ct.key}
+              style={[s.filterChip, filter === ct.key && { backgroundColor: ct.color + '20', borderColor: ct.color + '40' }]}
+              onPress={() => setFilter(ct.key)}
             >
-              <Ionicons name="search" size={15} color="#000" />
-              <Text style={s.emptyBtnText}>Discover Content</Text>
+              <Ionicons name={ct.icon as any} size={13} color={filter === ct.key ? ct.color : '#71717A'} />
+              <Text style={[s.filterChipText, filter === ct.key && { color: ct.color }]}>
+                {ct.label}
+              </Text>
+              <View style={[s.filterCount, filter === ct.key && { backgroundColor: ct.color + '30' }]}>
+                <Text style={[s.filterCountText, filter === ct.key && { color: ct.color }]}>{count}</Text>
+              </View>
             </Pressable>
-          </View>
-        )}
+          );
+        })}
+      </ScrollView>
+    </Animated.View>
+  ), [fadeIn, slideUp, totalCount, filter, counts]);
 
-      </Animated.View>
-    </ScrollView>
+  return (
+    <FlatList
+      style={{ flex: 1, backgroundColor: '#000' }}
+      contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: bottomPad }}
+      data={rows}
+      keyExtractor={rowKey}
+      renderItem={renderRow}
+      ListHeaderComponent={header}
+      showsVerticalScrollIndicator={false}
+      initialNumToRender={6}
+      windowSize={7}
+      maxToRenderPerBatch={6}
+      removeClippedSubviews
+    />
   );
 }
 
@@ -521,10 +490,11 @@ const s = StyleSheet.create({
   filterCountText: { color: '#52525B', fontSize: 11, fontWeight: '700' },
 
   // Section
-  sectionWrap: { paddingHorizontal: 20, marginBottom: 24 },
+  sectionPad: { paddingHorizontal: 20 },
+  cardPad: { paddingHorizontal: 20 },
   sectionHeader: {
     flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: 14,
+    alignItems: 'center', marginBottom: 14, marginTop: 14,
   },
   sectionDotRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sectionDot: { width: 8, height: 8, borderRadius: 4 },

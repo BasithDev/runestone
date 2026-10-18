@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useTabBarPadding } from '../navGuard';
 
 interface Props {
   /** Changes on every show; `nonce` lets the same text re-trigger. */
@@ -12,6 +13,7 @@ interface Props {
 
 /** Animated toast pinned above the floating tab bar. */
 export default function Snackbar({ message, nonce, onHide, duration = 2500 }: Props) {
+  const bottom = useTabBarPadding(12); // sits just above the floating tab bar
   const opacity = useRef(new Animated.Value(0)).current;
   const lift = useRef(new Animated.Value(16)).current;
   const shown = useRef<string | null>(null);
@@ -38,7 +40,7 @@ export default function Snackbar({ message, nonce, onHide, duration = 2500 }: Pr
   }, [message, nonce, duration, opacity, lift]);
 
   return (
-    <Animated.View pointerEvents="none" style={[styles.wrap, { opacity, transform: [{ translateY: lift }] }]}>
+    <Animated.View pointerEvents="none" style={[styles.wrap, { bottom, opacity, transform: [{ translateY: lift }] }]}>
       <Ionicons name="checkmark-circle" size={18} color="#10B981" />
       <Text style={styles.text} numberOfLines={2}>{shown.current}</Text>
     </Animated.View>
@@ -50,7 +52,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 20,
     right: 20,
-    bottom: 100,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,

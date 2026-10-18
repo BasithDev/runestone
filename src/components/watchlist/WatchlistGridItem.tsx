@@ -1,12 +1,13 @@
 import React from 'react';
-import { Animated, Image, StyleSheet, Text, View } from 'react-native';
+import { Animated, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { WatchlistItem } from '../../services/watchlistStore';
 import { priorityOf } from '../lists/priority';
 import PressableScale from './PressableScale';
 import PriorityPill from './PriorityPill';
 import { useEntrance } from './useEntrance';
-import { COLORS, posterUriOf } from './utils';
+import { COLORS, itemKey, posterUriOf } from './utils';
 
 interface Props {
   item: WatchlistItem;
@@ -24,7 +25,7 @@ function WatchlistGridItem({ item, index, width, onPress, onLongPress }: Props) 
       <PressableScale onPress={() => onPress(item)} onLongPress={() => onLongPress(item)}>
         <View style={[s.poster, { width, height: width * 1.5 }]}>
           {uri ? (
-            <Image source={{ uri }} style={StyleSheet.absoluteFill} />
+            <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" transition={150} recyclingKey={itemKey(item)} />
           ) : (
             <View style={s.fallback}><Ionicons name="film-outline" size={24} color="#52525B" /></View>
           )}

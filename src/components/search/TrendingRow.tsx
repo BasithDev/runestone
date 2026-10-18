@@ -1,6 +1,7 @@
 import React, { memo, useCallback } from 'react';
-import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MediaItem } from './types';
 
@@ -16,7 +17,16 @@ const TrendingCard = memo(function TrendingCard({ item, rank, onOpen }: CardProp
   const title = item.title || item.name || 'Untitled';
   return (
     <Pressable style={styles.card} onPress={() => onOpen(item)}>
-      <Image source={{ uri: `${TMDB_IMG}${item.poster_path}` }} style={styles.poster} resizeMode="cover" />
+      {item.poster_path ? (
+        <Image
+          source={{ uri: `${TMDB_IMG}${item.poster_path}` }}
+          style={styles.poster}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          transition={150}
+          recyclingKey={String(item.id)}
+        />
+      ) : null}
       <LinearGradient colors={['transparent', 'rgba(0,0,0,0.9)']} locations={[0.45, 1]} style={StyleSheet.absoluteFill} />
       <Text style={styles.rank}>{rank}</Text>
       <View style={styles.info}>
@@ -57,6 +67,9 @@ function TrendingRow({ title, items, onOpen }: Props) {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.list}
         keyboardShouldPersistTaps="handled"
+        initialNumToRender={4}
+        windowSize={5}
+        removeClippedSubviews
       />
     </View>
   );

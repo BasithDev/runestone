@@ -121,7 +121,11 @@ export default function TabsLayout() {
 
   // ── Active index from pathname ─────────────────────
   const activeIndex = TAB_LIST.findIndex((t) => t.route === pathname);
-  const safeActiveIndex = activeIndex >= 0 ? activeIndex : 0;
+  // Detail screens (content/[id], ...) sit above the tabs and change the
+  // pathname; keep the last real tab highlighted so the pill doesn't jump.
+  const lastIndex = useRef(0);
+  if (activeIndex >= 0) lastIndex.current = activeIndex;
+  const safeActiveIndex = lastIndex.current;
 
   // ── Indicator helpers ──────────────────────────────
   const slideIndicator = useCallback(
@@ -169,10 +173,11 @@ export default function TabsLayout() {
   // ── Tab press handler ──────────────────────────────
   const onTabPress = useCallback(
     (index: number) => {
+      if (index === safeActiveIndex) return;
       slideIndicator(index, true);
       router.replace(TAB_LIST[index].route as any);
     },
-    [slideIndicator, router]
+    [slideIndicator, router, safeActiveIndex]
   );
 
   // ── Animated indicator style ───────────────────────

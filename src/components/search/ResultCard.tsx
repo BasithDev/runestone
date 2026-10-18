@@ -1,6 +1,7 @@
 import React, { memo, useEffect, useRef } from 'react';
-import { Animated, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import StatusPill from '../tracking/StatusPill';
 import { WatchingStatus } from '../../types';
 import { MediaItem, itemDate, mediaTypeOf } from './types';
@@ -61,7 +62,20 @@ function ResultCard({ item, index, status, watched, saved, onOpen, onOpenDetails
         onPressIn={() => pressTo(0.975)}
         onPressOut={() => pressTo(1)}
       >
-        <Image source={{ uri: `${TMDB_IMG}${item.poster_path}` }} style={styles.poster} resizeMode="cover" />
+        {item.poster_path ? (
+          <Image
+            source={{ uri: `${TMDB_IMG}${item.poster_path}` }}
+            style={styles.poster}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={150}
+            recyclingKey={String(item.id)}
+          />
+        ) : (
+          <View style={[styles.poster, styles.posterEmpty]}>
+            <Ionicons name="film-outline" size={24} color="#52525B" />
+          </View>
+        )}
 
         <View style={styles.info}>
           <Text style={styles.title} numberOfLines={2}>{title}</Text>
@@ -129,6 +143,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: '#1A1A1A',
   },
+  posterEmpty: { alignItems: 'center', justifyContent: 'center' },
   info: { flex: 1, paddingHorizontal: 12, justifyContent: 'center' },
   title: { color: '#FFFFFF', fontSize: 15, fontWeight: '700', letterSpacing: -0.3, marginBottom: 6 },
   metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 6 },

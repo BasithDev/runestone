@@ -1,18 +1,18 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useGuardedPush } from '../navGuard';
 import { Ionicons } from '@expo/vector-icons';
 import { useOttData } from './useOtt';
 
 /** Bell icon with unread badge; opens the alerts screen. */
 export default function AlertsBellButton() {
-  const router = useRouter();
+  const push = useGuardedPush();
   const { unread } = useOttData();
 
   return (
     <Pressable
       style={styles.btn}
-      onPress={() => router.push('/alerts' as any)}
+      onPress={() => push('/alerts')}
       hitSlop={8}
       accessibilityLabel="Alerts"
     >

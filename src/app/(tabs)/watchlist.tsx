@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Animated, Dimensions, FlatList, StyleSheet, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useGuardedPush } from '../../components/navGuard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWatchlist } from '../../context/WatchlistContext';
 import { WatchlistItem, WatchlistPriority } from '../../services/watchlistStore';
@@ -27,7 +27,7 @@ function ListSeparator() { return <View style={{ height: 12 }} />; }
 
 export default function WatchlistScreen() {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
+  const push = useGuardedPush();
   const { watchlist, loading, stats, updateItem } = useWatchlist();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -71,11 +71,11 @@ export default function WatchlistScreen() {
   const isFiltering = searchQuery.length > 0 || selectedGenre !== null || selectedPriority !== null || typeFilter !== 'all';
 
   const handlePress = useCallback((item: WatchlistItem) => {
-    router.push({
+    push({
       pathname: '/content/[id]',
       params: { id: item.id, media_type: item.media_type, from: 'watchlist' },
-    } as any);
-  }, [router]);
+    });
+  }, [push]);
 
   const handleLongPress = useCallback((item: WatchlistItem) => setEditing(item), []);
 
@@ -93,7 +93,7 @@ export default function WatchlistScreen() {
     });
   }, [fade]);
 
-  const goDiscover = useCallback(() => router.push('/(tabs)/search' as any), [router]);
+  const goDiscover = useCallback(() => push('/(tabs)/search'), [push]);
 
   const renderGrid = useCallback(
     ({ item, index }: { item: WatchlistItem; index: number }) => (
@@ -153,6 +153,8 @@ export default function WatchlistScreen() {
           showsVerticalScrollIndicator={false}
           initialNumToRender={9}
           windowSize={7}
+          maxToRenderPerBatch={9}
+          removeClippedSubviews
           contentContainerStyle={{
             paddingTop: insets.top + 20,
             paddingBottom: insets.bottom + 110,

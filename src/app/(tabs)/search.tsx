@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
+import { useGuardedPush, useTabBarPadding } from '../../components/navGuard';
+import { localDateKey } from '../../services/watchingStore';
 import {
   View,
   Text,
@@ -62,7 +64,8 @@ type PagedResponse = { results?: MediaItem[]; total_pages?: number };
 
 export default function SearchScreen() {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
+  const push = useGuardedPush();
+  const bottomPad = useTabBarPadding(8);
   const params = useLocalSearchParams<{ q?: string; person_id?: string; person_name?: string; company_id?: string; company_name?: string }>();
 
   const [query, setQuery] = useState(params.q || params.person_name || params.company_name || '');
@@ -102,7 +105,8 @@ export default function SearchScreen() {
   const genresRef = useRef(genres);
   genresRef.current = genres;
 
-  // Modal state for watchlist confirmation
+  // Don't leave a pending debounce behind on unmount.
+  useEffect(() => () => { if (searchTimeout.current) clearTimeout(searchTimeout.current); }, []);
 
   const activeCount = countActiveFilters(filters, year);
   const isBrowse = browseMode === 'search' && !query.trim() && activeCount > 0;
@@ -193,7 +197,7 @@ export default function SearchScreen() {
     const types: ('movie' | 'tv')[] = chip === 'Movies' ? ['movie']
       : chip === 'Series' || chip === 'Anime' ? ['tv']
       : ['movie', 'tv'];
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateKey();
 
     const calls = types.map(async (t) => {
       // Genre ids differ between movie and tv lists; keep the ones valid for this type.
@@ -437,8 +441,8 @@ export default function SearchScreen() {
 
   // ── Opening titles ───────────────────────────────────
   const openTitle = useCallback((id: number, mediaType: string) => {
-    router.push({ pathname: '/content/[id]', params: { id, media_type: mediaType } } as any);
-  }, [router]);
+    push({ pathname: '/content/[id]', params: { id, media_type: mediaType } });
+  }, [push]);
 
   // Long-press: straight to details (records the recent title).
   const onOpenDetails = useCallback((item: MediaItem) => {
@@ -538,7 +542,6 @@ export default function SearchScreen() {
 
   const trendingTitle = `Top 10 Trending ${activeChip === 'All' ? 'Now' : activeChip}`;
 
-  const bottomPad = 110;
   const emptyQueryContent = (
     <ScrollView
       showsVerticalScrollIndicator={false}
@@ -679,6 +682,8 @@ export default function SearchScreen() {
             keyboardShouldPersistTaps="handled"
             initialNumToRender={8}
             windowSize={9}
+            maxToRenderPerBatch={8}
+            removeClippedSubviews
           />
         )
       ) : emptyQueryContent}

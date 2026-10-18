@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import StatusPill from './StatusPill';
 import { WatchingStatus } from '../../types';
@@ -26,7 +27,7 @@ function SheetHero({ title, backdropUrl, posterUrl, meta, status, progress, hist
     <View style={s.hero}>
       <View style={s.backdrop}>
         {backdropUrl ? (
-          <Image source={{ uri: backdropUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <Image source={{ uri: backdropUrl }} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" transition={150} />
         ) : (
           <LinearGradient
             colors={['rgba(16,185,129,0.38)', 'rgba(16,185,129,0.10)', 'rgba(16,185,129,0.04)']}
@@ -49,7 +50,7 @@ function SheetHero({ title, backdropUrl, posterUrl, meta, status, progress, hist
       <View style={s.row}>
         <View style={s.posterShadow}>
           {posterUrl ? (
-            <Image source={{ uri: posterUrl }} style={s.poster} />
+            <Image source={{ uri: posterUrl }} style={s.poster} contentFit="cover" cachePolicy="memory-disk" transition={150} />
           ) : (
             <View style={[s.poster, s.posterFallback]}>
               <Ionicons name="film-outline" size={26} color="#52525B" />

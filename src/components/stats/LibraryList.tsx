@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
+import { useGuardedPush } from '../navGuard';
 import { Ionicons } from '@expo/vector-icons';
 import { ContentType, MONTH_NAMES, WatchingStatus, WatchLogEntry, titleKey } from '../../types';
 import { LibraryEntry, formatDuration } from '../../services/statsInsights';
@@ -49,14 +50,14 @@ function ProgressBar({ ratio, color }: { ratio: number; color: string }) {
   );
 }
 
-function Row({ item, onPress }: { item: LibraryEntry; onPress: () => void }) {
+const Row = memo(function Row({ item, onOpen }: { item: LibraryEntry; onOpen: (item: LibraryEntry) => void }) {
   const cfg = TYPE_CFG[item.contentType];
   const isTv = item.mediaType === 'tv';
   const hasProg = isTv && !!item.totalEpisodes && item.episodesWatched != null;
   return (
-    <ScalePressable onPress={onPress} style={s.row}>
+    <ScalePressable onPress={() => onOpen(item)} style={s.row}>
       {item.posterUrl
-        ? <Image source={{ uri: item.posterUrl }} style={s.poster} />
+        ? <Image source={{ uri: item.posterUrl }} style={s.poster} contentFit="cover" cachePolicy="memory-disk" transition={150} recyclingKey={item.key} />
         : <View style={[s.poster, s.posterEmpty]}><Ionicons name={cfg.icon as any} size={18} color="#3F3F46" /></View>}
       <View style={{ flex: 1, gap: 4 }}>
         <Text style={s.title} numberOfLines={1}>{item.title}</Text>
@@ -80,7 +81,10 @@ function Row({ item, onPress }: { item: LibraryEntry; onPress: () => void }) {
       </View>
     </ScalePressable>
   );
-}
+});
+
+const PAGE = 15;
+const MORE = 30;
 
 export default function LibraryList({
   library, watchLog, year, typeFilter, onTypeFilter, month, onClearMonth,
@@ -89,10 +93,10 @@ export default function LibraryList({
   typeFilter: ContentType | null; onTypeFilter: (t: ContentType | null) => void;
   month: number | null; onClearMonth: () => void;
 }) {
-  const router = useRouter();
+  const push = useGuardedPush();
   const [status, setStatus] = useState<StatusFilter>('all');
   const [sort, setSort] = useState<Sort>('recent');
-  const [showAll, setShowAll] = useState(false);
+  const [limit, setLimit] = useState(PAGE);
 
   // Titles with positive log entries in the selected month.
   const monthKeys = useMemo(() => {
@@ -116,9 +120,13 @@ export default function LibraryList({
     return out; // base is already newest-first
   }, [byType, status, sort]);
 
-  useEffect(() => { setShowAll(false); }, [typeFilter, status, sort, month]);
+  useEffect(() => { setLimit(PAGE); }, [typeFilter, status, sort, month]);
 
-  const visible = showAll ? rows : rows.slice(0, 15);
+  const visible = useMemo(() => rows.slice(0, limit), [rows, limit]);
+  const openItem = useCallback(
+    (item: LibraryEntry) => push({ pathname: '/content/[id]', params: { id: item.tmdbId, media_type: item.mediaType } }),
+    [push],
+  );
   const filtered = !!typeFilter || !!month;
 
   return (
@@ -179,15 +187,17 @@ export default function LibraryList({
       ) : (
         <View style={{ gap: 8 }}>
           {visible.map(item => (
-            <Row
-              key={item.key} item={item}
-              onPress={() => router.push({ pathname: '/content/[id]', params: { id: item.tmdbId, media_type: item.mediaType } } as any)}
-            />
+            <Row key={item.key} item={item} onOpen={openItem} />
           ))}
-          {rows.length > 15 && (
-            <Pressable onPress={() => setShowAll(v => !v)} style={s.showAll} hitSlop={6}>
-              <Text style={s.showAllText}>{showAll ? 'Show less' : `Show all (${rows.length})`}</Text>
-              <Ionicons name={showAll ? 'chevron-up' : 'chevron-down'} size={14} color="#fff" />
+          {rows.length > PAGE && (
+            <Pressable
+              onPress={() => setLimit(l => (l < rows.length ? l + MORE : PAGE))}
+              style={s.showAll} hitSlop={6}
+            >
+              <Text style={s.showAllText}>
+                {limit < rows.length ? `Show more (${rows.length - limit} left)` : 'Show less'}
+              </Text>
+              <Ionicons name={limit < rows.length ? 'chevron-down' : 'chevron-up'} size={14} color="#fff" />
             </Pressable>
           )}
         </View>

@@ -11,12 +11,14 @@ import {
   ActivityIndicator,
   StyleSheet,
   Dimensions,
-  Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useWatchlist } from '../../context/WatchlistContext';
+import { tmdbGet } from '../../services/tmdb';
+import AddToWatchlistSheet from '../../components/lists/AddToWatchlistSheet';
+import { WatchlistPriority } from '../../services/watchlistStore';
 
 // ── Types ──────────────────────────────────────────────
 interface MediaItem {
@@ -54,6 +56,13 @@ const chipToMediaType: Record<ChipType, string | null> = {
   Anime: 'tv', // filtered by genre later
   Others: null,
 };
+
+// Drop items without posters; Anime = TV results with the Animation genre (16).
+function applyChipFilter(items: MediaItem[], chip: ChipType): MediaItem[] {
+  let out = items.filter(i => i.poster_path);
+  if (chip === 'Anime') out = out.filter(i => i.genre_ids?.includes(16));
+  return out;
+}
 
 // ── Result row component ─────────────────────────────
 function ResultRow({ item, isSaved, onToggleSave }: {
@@ -148,7 +157,10 @@ export default function SearchScreen() {
 
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
-  const hasInitialSearch = useRef(false);
+  const trendingReq = useRef(0);
+  const requestId = useRef(0);          // bumped per new request; stale responses are dropped
+  const lastParamsKey = useRef('');
+  const [companyId, setCompanyId] = useState<string | null>(null);
 
   const { isInWatchlist, addItem, removeItem } = useWatchlist();
 
@@ -158,9 +170,7 @@ export default function SearchScreen() {
 
   // ── Fetch Trending (fallback) ────────────────────────
   const fetchTrending = useCallback(async (chip: ChipType) => {
-    const key = process.env.EXPO_PUBLIC_TMDB_API_KEY;
-    if (!key) return;
-
+    const reqId = ++trendingReq.current;
     setLoadingTrending(true);
     try {
       let endpoint = 'trending/all/day';
@@ -170,23 +180,16 @@ export default function SearchScreen() {
         endpoint = 'trending/tv/day';
       }
 
-      const res = await fetch(`https://api.themoviedb.org/3/${endpoint}?api_key=${key}`);
-      const json = await res.json();
+      const json = await tmdbGet<{ results?: MediaItem[] }>(endpoint);
+      if (reqId !== trendingReq.current) return;
 
       if (json.results) {
-        let items = json.results.filter((i: MediaItem) => i.poster_path);
-        
-        // Filter Anime (Animation genre id: 16)
-        if (chip === 'Anime') {
-          items = items.filter((i: any) => i.genre_ids?.includes(16));
-        }
-
-        setTrending(items.slice(0, 10));
+        setTrending(applyChipFilter(json.results, chip).slice(0, 10));
       }
     } catch {
       // silently fail
     } finally {
-      setLoadingTrending(false);
+      if (reqId === trendingReq.current) setLoadingTrending(false);
     }
   }, []);
 
@@ -197,36 +200,13 @@ export default function SearchScreen() {
     }
   }, [activeChip, query, fetchTrending]);
 
-  // Handle initial query from params (e.g. from content details)
-  useEffect(() => {
-    if (hasInitialSearch.current) return;
-
-    if (params.person_id) {
-      hasInitialSearch.current = true;
-      setBrowseMode('person');
-      setQuery(params.person_name || 'Actor');
-      fetchPersonCredits(params.person_id);
-    } else if (params.company_id) {
-      hasInitialSearch.current = true;
-      setBrowseMode('company');
-      setQuery(params.company_name || 'Studio');
-      fetchCompanyMovies(params.company_id);
-    } else if (params.q) {
-      hasInitialSearch.current = true;
-      setBrowseMode('search');
-      setQuery(params.q);
-      executeSearch(params.q, activeChip);
-    }
-  }, [params.person_id, params.company_id, params.q]);
-
   // ── Fetch person filmography ─────────────────────────
   const fetchPersonCredits = useCallback(async (personId: string) => {
-    const key = process.env.EXPO_PUBLIC_TMDB_API_KEY;
-    if (!key) return;
+    const reqId = ++requestId.current;
     setLoading(true);
     try {
-      const res = await fetch(`https://api.themoviedb.org/3/person/${personId}/combined_credits?api_key=${key}&language=en-US`);
-      const json = await res.json();
+      const json = await tmdbGet<{ cast?: any[] }>(`person/${personId}/combined_credits`);
+      if (reqId !== requestId.current) return;
       if (json.cast) {
         const seen = new Set<number>();
         const items = json.cast
@@ -238,79 +218,104 @@ export default function SearchScreen() {
           })
           .sort((a: any, b: any) => (b.vote_count || 0) - (a.vote_count || 0));
         setResults(items);
+        setPage(1);
         setTotalPages(1);
       }
     } catch { /* silently fail */ }
-    finally { setLoading(false); }
+    finally { if (reqId === requestId.current) setLoading(false); }
   }, []);
 
-  // ── Fetch company movies ─────────────────────────────
-  const fetchCompanyMovies = useCallback(async (companyId: string) => {
-    const key = process.env.EXPO_PUBLIC_TMDB_API_KEY;
-    if (!key) return;
+  // ── Company movies (paged discover) ──────────────────
+  const discoverCompany = useCallback(
+    (cid: string, pageNum: number) =>
+      tmdbGet<{ results?: MediaItem[]; total_pages?: number }>('discover/movie', {
+        with_companies: cid, sort_by: 'popularity.desc', page: pageNum,
+      }),
+    [],
+  );
+
+  const fetchCompanyMovies = useCallback(async (cid: string) => {
+    const reqId = ++requestId.current;
     setLoading(true);
     try {
-      const res = await fetch(`https://api.themoviedb.org/3/discover/movie?api_key=${key}&with_companies=${companyId}&sort_by=popularity.desc&language=en-US`);
-      const json = await res.json();
+      const json = await discoverCompany(cid, 1);
+      if (reqId !== requestId.current) return;
       if (json.results) {
-        const items = json.results.filter((i: any) => i.poster_path);
-        setResults(items.map((i: any) => ({ ...i, media_type: 'movie' })));
+        setResults(json.results.filter(i => i.poster_path).map(i => ({ ...i, media_type: 'movie' })));
         setTotalPages(json.total_pages || 1);
+        setPage(1);
       }
     } catch { /* silently fail */ }
-    finally { setLoading(false); }
-  }, []);
+    finally { if (reqId === requestId.current) setLoading(false); }
+  }, [discoverCompany]);
 
   // ── Search TMDb ──────────────────────────────────────
-  const searchTMDb = useCallback(async (searchQuery: string, pageNum: number, chip: ChipType) => {
-    const key = process.env.EXPO_PUBLIC_TMDB_API_KEY;
-    if (!key || !searchQuery.trim()) return null;
-
-    const mediaType = chipToMediaType[chip];
-    let url: string;
-
-    if (chip === 'Movies') {
-      url = `https://api.themoviedb.org/3/search/movie?api_key=${key}&query=${encodeURIComponent(searchQuery)}&page=${pageNum}`;
-    } else if (chip === 'Series' || chip === 'Anime') {
-      url = `https://api.themoviedb.org/3/search/tv?api_key=${key}&query=${encodeURIComponent(searchQuery)}&page=${pageNum}`;
-    } else {
-      url = `https://api.themoviedb.org/3/search/multi?api_key=${key}&query=${encodeURIComponent(searchQuery)}&page=${pageNum}`;
-    }
-
-    const res = await fetch(url);
-    const json = await res.json();
-    return json;
+  const searchTMDb = useCallback((searchQuery: string, pageNum: number, chip: ChipType) => {
+    const path = chip === 'Movies' ? 'search/movie'
+      : chip === 'Series' || chip === 'Anime' ? 'search/tv'
+      : 'search/multi';
+    return tmdbGet<{ results?: MediaItem[]; total_pages?: number }>(path, { query: searchQuery, page: pageNum });
   }, []);
 
   // ── Execute search (debounced) ───────────────────────
   const executeSearch = useCallback(async (searchQuery: string, chip: ChipType) => {
+    const reqId = ++requestId.current;
     if (!searchQuery.trim()) {
       setResults([]);
       setPage(1);
       setTotalPages(1);
+      setLoading(false);
       return;
     }
 
     setLoading(true);
     try {
       const json = await searchTMDb(searchQuery, 1, chip);
+      if (reqId !== requestId.current) return;
       if (json?.results) {
-        const filtered = json.results.filter((i: MediaItem) => i.poster_path);
-        setResults(filtered);
+        setResults(applyChipFilter(json.results, chip));
         setTotalPages(json.total_pages || 1);
         setPage(1);
       }
     } catch {
       // silently fail
     } finally {
-      setLoading(false);
+      if (reqId === requestId.current) setLoading(false);
     }
   }, [searchTMDb]);
+
+  // Handle query from params (e.g. from content details). The tab stays mounted,
+  // so react to every change in param values rather than only the first.
+  useEffect(() => {
+    const key = `${params.person_id ?? ''}|${params.company_id ?? ''}|${params.q ?? ''}`;
+    if (key === '||' || key === lastParamsKey.current) return;
+    lastParamsKey.current = key;
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+
+    if (params.person_id) {
+      setBrowseMode('person');
+      setCompanyId(null);
+      setQuery(params.person_name || 'Actor');
+      fetchPersonCredits(params.person_id);
+    } else if (params.company_id) {
+      setBrowseMode('company');
+      setCompanyId(params.company_id);
+      setQuery(params.company_name || 'Studio');
+      fetchCompanyMovies(params.company_id);
+    } else if (params.q) {
+      setBrowseMode('search');
+      setCompanyId(null);
+      setQuery(params.q);
+      executeSearch(params.q, activeChip);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.person_id, params.company_id, params.q, params.person_name, params.company_name]);
 
   // ── Debounced input handler ──────────────────────────
   const onChangeText = useCallback((text: string) => {
     setQuery(text);
     setBrowseMode('search'); // typing resets to normal search
+    lastParamsKey.current = '';
     if (searchTimeout.current) clearTimeout(searchTimeout.current);
     searchTimeout.current = setTimeout(() => {
       executeSearch(text, activeChip);
@@ -320,22 +325,31 @@ export default function SearchScreen() {
   // ── Chip press ───────────────────────────────────────
   const onChipPress = useCallback((chip: ChipType) => {
     setActiveChip(chip);
-    if (query.trim()) {
+    if (query.trim() && browseMode === 'search') {
       executeSearch(query, chip);
     }
-  }, [query, executeSearch]);
+  }, [query, browseMode, executeSearch]);
 
   // ── Load more (infinite scroll) ──────────────────────
   const loadMore = useCallback(async () => {
-    if (loadingMore || page >= totalPages || !query.trim()) return;
+    if (loadingMore || loading || page >= totalPages || !query.trim() || browseMode === 'person') return;
+    if (browseMode === 'company' && !companyId) return;
 
+    const reqId = requestId.current; // a newer search invalidates this page
     setLoadingMore(true);
     try {
       const nextPage = page + 1;
-      const json = await searchTMDb(query, nextPage, activeChip);
+      const json = browseMode === 'company'
+        ? await discoverCompany(companyId!, nextPage)
+        : await searchTMDb(query, nextPage, activeChip);
+      if (reqId !== requestId.current) return;
       if (json?.results) {
-        const filtered = json.results.filter((i: MediaItem) => i.poster_path);
-        setResults((prev) => [...prev, ...filtered]);
+        let filtered = applyChipFilter(json.results, browseMode === 'company' ? 'All' : activeChip);
+        if (browseMode === 'company') filtered = filtered.map(i => ({ ...i, media_type: 'movie' }));
+        setResults((prev) => {
+          const seen = new Set(prev.map(i => `${i.media_type}-${i.id}`));
+          return [...prev, ...filtered.filter(i => !seen.has(`${i.media_type}-${i.id}`))];
+        });
         setPage(nextPage);
       }
     } catch {
@@ -343,7 +357,7 @@ export default function SearchScreen() {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, page, totalPages, query, activeChip, searchTMDb]);
+  }, [loadingMore, loading, page, totalPages, query, activeChip, browseMode, companyId, searchTMDb, discoverCompany]);
 
   // ── Toggle watchlist ────────────────────────────────
   const handleToggleWatchlist = useCallback((item: MediaItem) => {
@@ -355,10 +369,9 @@ export default function SearchScreen() {
     }
   }, [isInWatchlist, removeItem]);
 
-  const handleConfirmAdd = useCallback(async () => {
+  const handleConfirmAdd = useCallback(async (priority: WatchlistPriority, whyAdded: string) => {
     if (!modalItem) return;
     const mediaType = modalItem.media_type || (modalItem.title ? 'movie' : 'tv');
-    const key = process.env.EXPO_PUBLIC_TMDB_API_KEY;
 
     let runtime: number | null = null;
     let episodeCount: number | null = null;
@@ -366,37 +379,39 @@ export default function SearchScreen() {
     let genres: string[] = [];
 
     // Fetch full details for runtime/episode data
-    if (key) {
-      setModalLoading(true);
-      try {
-        const res = await fetch(`https://api.themoviedb.org/3/${mediaType}/${modalItem.id}?api_key=${key}&language=en-US`);
-        const json = await res.json();
-        runtime = json.runtime || null;
-        episodeCount = json.number_of_episodes || null;
-        // Try multiple sources for episode runtime
-        episodeRuntime = json.episode_run_time?.[0]
-          || json.last_episode_to_air?.runtime
-          || null;
-        genres = (json.genres || []).map((g: any) => g.name);
-      } catch { /* use defaults */ }
+    setModalLoading(true);
+    try {
+      const json = await tmdbGet<any>(`${mediaType}/${modalItem.id}`);
+      runtime = json.runtime || null;
+      episodeCount = json.number_of_episodes || null;
+      // Try multiple sources for episode runtime
+      episodeRuntime = json.episode_run_time?.[0]
+        || json.last_episode_to_air?.runtime
+        || null;
+      genres = (json.genres || []).map((g: any) => g.name);
+    } catch { /* use defaults */ }
+
+    try {
+      await addItem({
+        id: modalItem.id,
+        media_type: mediaType as 'movie' | 'tv',
+        title: modalItem.title || modalItem.name || '',
+        poster_path: modalItem.poster_path,
+        backdrop_path: null,
+        vote_average: modalItem.vote_average,
+        vote_count: modalItem.vote_count || 0,
+        runtime,
+        episode_count: episodeCount,
+        episode_runtime: episodeRuntime,
+        genres,
+        release_date: modalItem.release_date || modalItem.first_air_date || '',
+        overview: modalItem.overview || '',
+        priority,
+        ...(whyAdded ? { why_added: whyAdded } : {}),
+      });
+    } finally {
       setModalLoading(false);
     }
-
-    await addItem({
-      id: modalItem.id,
-      media_type: mediaType as 'movie' | 'tv',
-      title: modalItem.title || modalItem.name || '',
-      poster_path: modalItem.poster_path,
-      backdrop_path: null,
-      vote_average: modalItem.vote_average,
-      vote_count: modalItem.vote_count || 0,
-      runtime,
-      episode_count: episodeCount,
-      episode_runtime: episodeRuntime,
-      genres,
-      release_date: modalItem.release_date || modalItem.first_air_date || '',
-      overview: modalItem.overview || '',
-    });
     setModalItem(null);
   }, [modalItem, addItem]);
 
@@ -531,7 +546,7 @@ export default function SearchScreen() {
             autoCorrect={false}
           />
           {query.length > 0 && (
-            <Pressable onPress={() => { setQuery(''); setResults([]); setBrowseMode('search'); }}>
+            <Pressable onPress={() => { lastParamsKey.current = ''; requestId.current++; setLoading(false); setQuery(''); setResults([]); setBrowseMode('search'); setCompanyId(null); }}>
               <Ionicons name="close-circle" size={18} color="#52525B" />
             </Pressable>
           )}
@@ -599,44 +614,15 @@ export default function SearchScreen() {
         />
       )}
 
-      {/* ── WATCHLIST CONFIRM MODAL ─────────────── */}
-      <Modal visible={!!modalItem} transparent animationType="fade" onRequestClose={() => setModalItem(null)}>
-        <Pressable style={styles.modalOverlay} onPress={() => setModalItem(null)}>
-          <Pressable style={styles.modalContent} onPress={e => e.stopPropagation()}>
-            <View style={styles.modalHandle} />
-            {modalItem && (
-              <>
-                <View style={{ flexDirection: 'row', gap: 14, marginBottom: 20 }}>
-                  {modalItem.poster_path && (
-                    <Image source={{ uri: `${TMDB_IMG}${modalItem.poster_path}` }} style={{ width: 56, height: 84, borderRadius: 10 }} />
-                  )}
-                  <View style={{ flex: 1, justifyContent: 'center' }}>
-                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }} numberOfLines={2}>
-                      {modalItem.title || modalItem.name}
-                    </Text>
-                    <Text style={{ color: '#71717A', fontSize: 13, fontWeight: '500', marginTop: 4 }}>
-                      {modalItem.media_type === 'tv' ? 'Series' : 'Movie'}
-                    </Text>
-                  </View>
-                </View>
-                <Pressable style={styles.modalConfirmBtn} onPress={handleConfirmAdd} disabled={modalLoading}>
-                  {modalLoading ? (
-                    <ActivityIndicator size="small" color="#000" />
-                  ) : (
-                    <>
-                      <Ionicons name="bookmark" size={18} color="#000" />
-                      <Text style={styles.modalConfirmText}>Add to Watchlist</Text>
-                    </>
-                  )}
-                </Pressable>
-                <Pressable style={styles.modalCancelBtn} onPress={() => setModalItem(null)}>
-                  <Text style={styles.modalCancelText}>Cancel</Text>
-                </Pressable>
-              </>
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* ── ADD TO WATCHLIST SHEET ─────────────── */}
+      <AddToWatchlistSheet
+        visible={!!modalItem}
+        title={modalItem?.title || modalItem?.name || ''}
+        subtitle={modalItem ? (modalItem.media_type === 'tv' || (!modalItem.title && modalItem.name) ? 'Series' : 'Movie') : undefined}
+        loading={modalLoading}
+        onConfirm={handleConfirmAdd}
+        onCancel={() => setModalItem(null)}
+      />
     </View>
   );
 }
@@ -907,33 +893,4 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
-  // Modal
-  modalOverlay: {
-    flex: 1, justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-  },
-  modalContent: {
-    backgroundColor: '#1A1A1A',
-    borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    padding: 24, paddingBottom: 40,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-  },
-  modalHandle: {
-    width: 40, height: 4, borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    alignSelf: 'center', marginBottom: 20,
-  },
-  modalConfirmBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, paddingVertical: 14, borderRadius: 14,
-    backgroundColor: '#10B981',
-  },
-  modalConfirmText: { color: '#000', fontSize: 15, fontWeight: '700' },
-  modalCancelBtn: {
-    alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 14, borderRadius: 14, marginTop: 10,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-  },
-  modalCancelText: { color: '#A1A1AA', fontSize: 14, fontWeight: '600' },
 });

@@ -4,6 +4,8 @@ import {
   getWatchlist,
   addToWatchlist,
   removeFromWatchlist,
+  updateWatchlistItem,
+  WatchlistPriority,
   isInWatchlist as checkIsInWatchlist,
   getWatchlistStats,
 } from '../services/watchlistStore';
@@ -15,6 +17,7 @@ interface WatchlistContextType {
   isInWatchlist: (id: number, mediaType: string) => boolean;
   addItem: (item: Omit<WatchlistItem, 'added_at' | 'local_poster_uri'>) => Promise<void>;
   removeItem: (id: number, mediaType: string) => Promise<void>;
+  updateItem: (id: number, mediaType: string, updates: { priority?: WatchlistPriority; why_added?: string }) => Promise<void>;
   refresh: () => Promise<void>;
 }
 
@@ -25,6 +28,7 @@ const WatchlistContext = createContext<WatchlistContextType>({
   isInWatchlist: () => false,
   addItem: async () => {},
   removeItem: async () => {},
+  updateItem: async () => {},
   refresh: async () => {},
 });
 
@@ -76,6 +80,14 @@ export function WatchlistProvider({ children }: { children: ReactNode }) {
     [refresh]
   );
 
+  const updateItem = useCallback(
+    async (id: number, mediaType: string, updates: { priority?: WatchlistPriority; why_added?: string }) => {
+      await updateWatchlistItem(id, mediaType, updates);
+      await refresh();
+    },
+    [refresh]
+  );
+
   const stats = useMemo(() => getWatchlistStats(watchlist), [watchlist]);
 
   const value = useMemo(() => ({
@@ -85,8 +97,9 @@ export function WatchlistProvider({ children }: { children: ReactNode }) {
     isInWatchlist: isInWatchlistSync,
     addItem,
     removeItem,
+    updateItem,
     refresh,
-  }), [watchlist, loading, stats, isInWatchlistSync, addItem, removeItem, refresh]);
+  }), [watchlist, loading, stats, isInWatchlistSync, addItem, removeItem, updateItem, refresh]);
 
   return (
     <WatchlistContext.Provider value={value}>

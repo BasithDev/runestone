@@ -7,7 +7,9 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useWatchlist } from '../../context/WatchlistContext';
-import { WatchlistItem } from '../../services/watchlistStore';
+import { WatchlistItem, WatchlistPriority } from '../../services/watchlistStore';
+import AddToWatchlistSheet from '../../components/lists/AddToWatchlistSheet';
+import { PRIORITIES, priorityOf, priorityMeta } from '../../components/lists/priority';
 import { parseLocalDate } from '../../types';
 
 const { width } = Dimensions.get('window');
@@ -25,7 +27,8 @@ function StatCard({ label, value, icon }: { label: string; value: string | numbe
 }
 
 // ── Watchlist Item Card ────────────────────────────────
-function WatchlistCard({ item, onPress }: { item: WatchlistItem; onPress: () => void }) {
+function WatchlistCard({ item, onPress, onLongPress }: { item: WatchlistItem; onPress: () => void; onLongPress: () => void }) {
+  const pri = priorityMeta(priorityOf(item));
   const posterUri = Platform.OS !== 'web' && item.local_poster_uri
     ? item.local_poster_uri
     : item.poster_path
@@ -39,7 +42,7 @@ function WatchlistCard({ item, onPress }: { item: WatchlistItem; onPress: () => 
   const addedStr = new Date(item.added_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 
   return (
-    <Pressable style={s.card} onPress={onPress}>
+    <Pressable style={s.card} onPress={onPress} onLongPress={onLongPress} delayLongPress={350}>
       {/* Poster */}
       <View style={s.cardPosterWrap}>
         {posterUri ? (
@@ -53,7 +56,13 @@ function WatchlistCard({ item, onPress }: { item: WatchlistItem; onPress: () => 
 
       {/* Info */}
       <View style={s.cardInfo}>
-        <Text style={s.cardTitle} numberOfLines={2}>{item.title}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+          <Text style={[s.cardTitle, { flex: 1 }]} numberOfLines={2}>{item.title}</Text>
+          <View style={[s.priBadge, { backgroundColor: pri.color + '22', borderColor: pri.color + '55' }]}>
+            <View style={[s.priDot, { backgroundColor: pri.color }]} />
+            <Text style={[s.priText, { color: pri.color }]}>{pri.label}</Text>
+          </View>
+        </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
           <Text style={s.cardBadge}>{item.media_type === 'tv' ? 'Series' : 'Movie'}</Text>
           {dateStr ? <Text style={s.cardDate}>{dateStr}</Text> : null}
@@ -75,6 +84,10 @@ function WatchlistCard({ item, onPress }: { item: WatchlistItem; onPress: () => 
             ))}
           </View>
         )}
+
+        {item.why_added ? (
+          <Text style={s.cardWhy} numberOfLines={2}>“{item.why_added}”</Text>
+        ) : null}
 
         {/* Added date */}
         <Text style={s.cardAdded}>Added {addedStr}</Text>
@@ -111,11 +124,13 @@ function EmptyState({ onDiscover }: { onDiscover: () => void }) {
 export default function WatchlistScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { watchlist, loading, stats } = useWatchlist();
+  const { watchlist, loading, stats, updateItem } = useWatchlist();
+  const [selectedPriority, setSelectedPriority] = useState<WatchlistPriority | null>(null);
+  const [editing, setEditing] = useState<WatchlistItem | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<'added' | 'rating' | 'title' | 'release'>('added');
+  const [sortBy, setSortBy] = useState<'priority' | 'added' | 'rating' | 'title' | 'release'>('priority');
 
   // Extract all unique genres from watchlist
   const allGenres = useMemo(() => {
@@ -131,11 +146,18 @@ export default function WatchlistScreen() {
       const nameMatch = !q || item.title.toLowerCase().includes(q);
       const genreTextMatch = !q || item.genres.some(g => g.toLowerCase().includes(q));
       const genreChipMatch = !selectedGenre || item.genres.includes(selectedGenre);
-      return (nameMatch || genreTextMatch) && genreChipMatch;
+      const priorityMatch = !selectedPriority || priorityOf(item) === selectedPriority;
+      return (nameMatch || genreTextMatch) && genreChipMatch && priorityMatch;
     });
 
     // Sort
+    const byAdded = (a: WatchlistItem, b: WatchlistItem) => (b.added_at || '').localeCompare(a.added_at || '');
     switch (sortBy) {
+      case 'priority': {
+        const rank = (i: WatchlistItem) => priorityMeta(priorityOf(i)).rank;
+        result = [...result].sort((a, b) => rank(a) - rank(b) || byAdded(a, b));
+        break;
+      }
       case 'rating':
         result = [...result].sort((a, b) => b.vote_average - a.vote_average);
         break;
@@ -152,7 +174,7 @@ export default function WatchlistScreen() {
     }
 
     return result;
-  }, [watchlist, searchQuery, selectedGenre, sortBy]);
+  }, [watchlist, searchQuery, selectedGenre, selectedPriority, sortBy]);
 
   const handlePress = (item: WatchlistItem) => {
     router.push({
@@ -164,9 +186,10 @@ export default function WatchlistScreen() {
   const clearSearch = () => {
     setSearchQuery('');
     setSelectedGenre(null);
+    setSelectedPriority(null);
   };
 
-  const isFiltering = searchQuery.length > 0 || selectedGenre !== null;
+  const isFiltering = searchQuery.length > 0 || selectedGenre !== null || selectedPriority !== null;
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -213,6 +236,31 @@ export default function WatchlistScreen() {
                   </Pressable>
                 )}
               </View>
+            )}
+
+            {/* Priority Chips */}
+            {watchlist.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 8, marginTop: 12 }}
+              >
+                {PRIORITIES.map(p => {
+                  const isActive = selectedPriority === p.key;
+                  const count = watchlist.filter(i => priorityOf(i) === p.key).length;
+                  return (
+                    <Pressable
+                      key={p.key}
+                      style={[s.genreFilterChip, isActive && { backgroundColor: p.color + '26', borderColor: p.color }]}
+                      onPress={() => setSelectedPriority(isActive ? null : p.key)}
+                    >
+                      <View style={[s.priDot, { backgroundColor: p.color }]} />
+                      <Text style={[s.genreFilterText, isActive && { color: p.color }]}>{p.label}</Text>
+                      <Text style={[s.genreFilterCountText, isActive && { color: p.color }]}>{count}</Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
             )}
 
             {/* Genre Chips */}
@@ -265,6 +313,7 @@ export default function WatchlistScreen() {
                   <Ionicons name="swap-vertical" size={13} color="#52525B" />
                 </View>
                 {([
+                  { key: 'priority' as const, label: 'Priority' },
                   { key: 'added' as const, label: 'Date Added' },
                   { key: 'rating' as const, label: 'Rating' },
                   { key: 'title' as const, label: 'Title' },
@@ -314,9 +363,22 @@ export default function WatchlistScreen() {
           )
         }
         renderItem={({ item }) => (
-          <WatchlistCard item={item} onPress={() => handlePress(item)} />
+          <WatchlistCard item={item} onPress={() => handlePress(item)} onLongPress={() => setEditing(item)} />
         )}
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+      />
+      <AddToWatchlistSheet
+        visible={!!editing}
+        mode="edit"
+        title={editing?.title ?? ''}
+        subtitle="Edit priority and note"
+        initialPriority={editing ? priorityOf(editing) : 'medium'}
+        initialWhy={editing?.why_added ?? ''}
+        onCancel={() => setEditing(null)}
+        onConfirm={async (priority, why) => {
+          if (editing) await updateItem(editing.id, editing.media_type, { priority, why_added: why });
+          setEditing(null);
+        }}
       />
     </View>
   );
@@ -377,6 +439,13 @@ const s = StyleSheet.create({
     color: '#3F3F46', fontSize: 10, fontWeight: '500',
     marginTop: 6,
   },
+  priBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6, borderWidth: 1,
+  },
+  priDot: { width: 6, height: 6, borderRadius: 3 },
+  priText: { fontSize: 10, fontWeight: '700' },
+  cardWhy: { color: '#A1A1AA', fontSize: 12, fontStyle: 'italic', marginTop: 6, lineHeight: 16 },
   // Empty state
   emptyWrap: {
     flex: 1, justifyContent: 'center', alignItems: 'center',

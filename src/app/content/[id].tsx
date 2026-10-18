@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useWatchlist } from '../../context/WatchlistContext';
 import { useWatching } from '../../context/WatchingContext';
-import { detectContentType, parseLocalDate, SeasonBreakdown } from '../../types';
+import { detectContentType, parseLocalDate, SeasonBreakdown, WatchingStatus, WATCHING_STATUS_LABELS } from '../../types';
 import { tmdbGet, REGION } from '../../services/tmdb';
 
 const IMG_W500 = 'https://image.tmdb.org/t/p/w500';
@@ -51,6 +51,7 @@ interface Details {
   runtime?: number; episode_run_time?: number[];
   number_of_seasons?: number; number_of_episodes?: number;
   status?: string;
+  created_by?: { id: number; name: string }[];
   genres?: { id: number; name: string }[];
   overview?: string;
   budget?: number; revenue?: number;
@@ -132,14 +133,22 @@ function ProviderLogo({ p }: { p: Provider }) {
   );
 }
 
-// ── Watch status types ────────────────────────────────
-type WatchStatus = 'not_watched' | 'watching' | 'watched';
-const WATCH_STATUS_CONFIG: Record<WatchStatus, { label: string; icon: string; color: string; bg: string; border: string }> = {
-  not_watched: { label: 'Not Watched', icon: 'eye-off-outline', color: '#71717A', bg: 'rgba(255,255,255,0.06)', border: 'rgba(255,255,255,0.1)' },
-  watching: { label: 'Watching', icon: 'play-circle', color: '#10B981', bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.25)' },
-  watched: { label: 'Watched', icon: 'checkmark-circle', color: '#3B82F6', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.25)' },
+// ── Watch status display ──────────────────────────────
+type StatusStyle = { icon: string; color: string; bg: string; border: string };
+const mkStyle = (icon: string, c: string, rgb: string): StatusStyle =>
+  ({ icon, color: c, bg: `rgba(${rgb},0.12)`, border: `rgba(${rgb},0.25)` });
+const NOT_TRACKED_STYLE: StatusStyle = {
+  icon: 'eye-off-outline', color: '#71717A', bg: 'rgba(255,255,255,0.06)', border: 'rgba(255,255,255,0.1)',
 };
-const STATUS_ORDER: WatchStatus[] = ['not_watched', 'watching', 'watched'];
+const WATCHED_STYLE = mkStyle('checkmark-circle', '#3B82F6', '59,130,246');
+const TRACKED_STYLES: Record<WatchingStatus, StatusStyle> = {
+  watching: mkStyle('play-circle', '#10B981', '16,185,129'),
+  rewatching: mkStyle('repeat', '#A855F7', '168,85,247'),
+  completed: WATCHED_STYLE,
+  caught_up: mkStyle('time', '#F59E0B', '245,158,11'),
+  on_hold: mkStyle('pause-circle', '#F59E0B', '245,158,11'),
+  dropped: mkStyle('close-circle', '#F87171', '248,113,113'),
+};
 
 // ── Main Screen ────────────────────────────────────────
 export default function ContentDetailsScreen() {
@@ -155,80 +164,64 @@ export default function ContentDetailsScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
-  const [watchStatus, setWatchStatus] = useState<WatchStatus>('not_watched');
   const [showModal, setShowModal] = useState(false);
 
   const { isInWatchlist, addItem, removeItem } = useWatchlist();
-  const { isItemWatching, startWatching, markCompleted, markCaughtUp, remove: removeWatching, getItem } = useWatching();
+  const { startWatching, getItem, getHistoryEntries } = useWatching();
   const inWatchlist = details ? isInWatchlist(details.id, type) : false;
 
   // Animation for watch status
   const statusOpacity = useRef(new Animated.Value(1)).current;
 
-  // Load persisted watch status on mount or when watching context updates
-  useEffect(() => {
-    if (!details) return;
-    const watchingItem = getItem(details.id, type);
-    if (watchingItem) {
-      if (watchingItem.status === 'completed') setWatchStatus('watched');
-      else setWatchStatus('watching');
-    } else {
-      setWatchStatus('not_watched');
-    }
-  }, [details, getItem, type]);
+  // Status: watching list (its status) -> history (watched) -> not watched
+  const trackedItem = getItem(Number(id), type);
+  const historyCount = getHistoryEntries(Number(id), type).length;
 
-  const cycleWatchStatus = async () => {
+  const handleStatusPress = () => {
     if (!details) return;
+    if (trackedItem) {
+      router.push({ pathname: '/watching-progress/[id]', params: { id: details.id, media_type: type } } as any);
+      return;
+    }
 
     Animated.timing(statusOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start(async () => {
-      const currentIdx = STATUS_ORDER.indexOf(watchStatus);
-      const next = STATUS_ORDER[(currentIdx + 1) % STATUS_ORDER.length];
+      const contentType = detectContentType(type, undefined, details.genres);
+      const seasonEpisodes: SeasonBreakdown[] = seasonDetails.map(s => ({
+        season: s.season_number,
+        episodes: s.episode_count,
+        title: s.name,
+      }));
+      const directors = type === 'movie'
+        ? (details.credits?.crew || []).filter(c => c.job === 'Director').map(c => c.name)
+        : (details.created_by || []).map(c => c.name);
 
-      if (next === 'watching') {
-        // Start watching → add to watching store
-        const contentType = detectContentType(type, undefined, details.genres);
-        const seasonEpisodes: SeasonBreakdown[] = seasonDetails.map(s => ({
-          season: s.season_number,
-          episodes: s.episode_count,
-          title: s.name,
-        }));
+      // The store flips this to 'rewatching' when the title is already in history
+      await startWatching({
+        id: Date.now(),
+        tmdbId: details.id,
+        mediaType: type,
+        contentType,
+        title: details.title || details.name || '',
+        posterUrl: details.poster_path ? `https://image.tmdb.org/t/p/w342${details.poster_path}` : null,
+        year: (details.release_date || details.first_air_date || '').split('-')[0] || '',
+        status: 'watching',
+        currentSeason: type === 'tv' ? 1 : undefined,
+        currentEpisode: type === 'tv' ? 1 : undefined,
+        totalSeasons: details.number_of_seasons || undefined,
+        totalEpisodes: details.number_of_episodes || undefined,
+        episodesWatched: 0,
+        seasonEpisodes: seasonEpisodes.length > 0 ? seasonEpisodes : undefined,
+        movieCompleted: false,
+        genres: (details.genres || []).map(g => g.name),
+        rating: details.vote_average || 0,
+        runtime: details.runtime || null,
+        episodeRuntime: details.episode_run_time?.[0] || null,
+        directors: directors.length > 0 ? directors : undefined,
+        showStatus: type === 'tv' ? details.status : undefined,
+      });
 
-        await startWatching({
-          id: Date.now(),
-          tmdbId: details.id,
-          mediaType: type,
-          contentType,
-          title: details.title || details.name || '',
-          posterUrl: details.poster_path ? `https://image.tmdb.org/t/p/w342${details.poster_path}` : null,
-          year: (details.release_date || details.first_air_date || '').split('-')[0] || '',
-          status: 'watching',
-          currentSeason: type === 'tv' ? 1 : undefined,
-          currentEpisode: type === 'tv' ? 1 : undefined,
-          totalSeasons: details.number_of_seasons || undefined,
-          totalEpisodes: details.number_of_episodes || undefined,
-          episodesWatched: 0,
-          seasonEpisodes: seasonEpisodes.length > 0 ? seasonEpisodes : undefined,
-          movieCompleted: false,
-          genres: (details.genres || []).map(g => g.name),
-          rating: details.vote_average || 0,
-          runtime: details.runtime || null,
-          episodeRuntime: details.episode_run_time?.[0] || null,
-        });
-
-        // Remove from watchlist if present
-        if (inWatchlist) removeItem(details.id, type);
-        setWatchStatus('watching');
-
-      } else if (next === 'watched') {
-        // Mark completed → move to history
-        await markCompleted(details.id, type);
-        setWatchStatus('watched');
-
-      } else {
-        // Back to not_watched → remove from watching
-        await removeWatching(details.id, type);
-        setWatchStatus('not_watched');
-      }
+      // Remove from watchlist if present
+      if (inWatchlist) removeItem(details.id, type);
 
       Animated.timing(statusOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
     });
@@ -374,7 +367,13 @@ export default function ContentDetailsScreen() {
 
   const overviewLong = overview.length > 180;
   const overviewText = overviewLong && !overviewExpanded ? overview.slice(0, 180) + '…' : overview;
-  const statusCfg = WATCH_STATUS_CONFIG[watchStatus];
+  const statusCfg = trackedItem
+    ? TRACKED_STYLES[trackedItem.status]
+    : historyCount > 0 ? WATCHED_STYLE : NOT_TRACKED_STYLE;
+  const statusLabel = trackedItem
+    ? WATCHING_STATUS_LABELS[trackedItem.status]
+    : historyCount > 0 ? 'Watched' : 'Not Watched';
+  const statusHint = trackedItem ? 'View progress' : historyCount > 0 ? 'Tap to rewatch' : 'Tap to start';
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -492,10 +491,11 @@ export default function ContentDetailsScreen() {
           ) : null}
 
           {/* ── WATCH STATUS ────────────────────────────── */}
-          <Pressable onPress={cycleWatchStatus} style={[s.watchStatusBtn, { backgroundColor: statusCfg.bg, borderColor: statusCfg.border }]}>
+          <Pressable onPress={handleStatusPress} style={[s.watchStatusBtn, { backgroundColor: statusCfg.bg, borderColor: statusCfg.border }]}>
             <Animated.View style={{ opacity: statusOpacity, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Ionicons name={statusCfg.icon as any} size={18} color={statusCfg.color} />
-              <Text style={[s.watchStatusText, { color: statusCfg.color }]}>{statusCfg.label}</Text>
+              <Text style={[s.watchStatusText, { color: statusCfg.color }]}>{statusLabel}</Text>
+              <Text style={{ color: statusCfg.color, opacity: 0.6, fontSize: 11, fontWeight: '600' }}>· {statusHint}</Text>
             </Animated.View>
           </Pressable>
 

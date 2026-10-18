@@ -13,6 +13,7 @@ import {
   WatchingItem,
   ContentType,
 } from '../../types';
+import { getProgress } from '../../services/watchingStore';
 
 const { width: SW } = Dimensions.get('window');
 
@@ -26,7 +27,7 @@ function getTypeBadgeLabel(type: ContentType): string {
     case 'movie': return 'Movie';
     case 'series': return 'Series';
     case 'anime': return 'Anime';
-    case 'other': return 'Other';
+    case 'other': return 'Docs';
   }
 }
 
@@ -43,6 +44,12 @@ function getStatusConfig(status: string) {
       return { label: 'Not Completed', icon: 'pause-circle' as const, color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' };
     case 'watching':
       return { label: 'Watching', icon: 'play-circle' as const, color: '#3B82F6', bg: 'rgba(59,130,246,0.12)' };
+    case 'rewatching':
+      return { label: 'Rewatching', icon: 'repeat' as const, color: '#A855F7', bg: 'rgba(168,85,247,0.12)' };
+    case 'on_hold':
+      return { label: 'On Hold', icon: 'pause-circle' as const, color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' };
+    case 'dropped':
+      return { label: 'Dropped', icon: 'close-circle' as const, color: '#F87171', bg: 'rgba(248,113,113,0.12)' };
     case 'caught_up':
       return { label: 'Caught Up', icon: 'time' as const, color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' };
     default:
@@ -85,6 +92,30 @@ function ProgressBar({ percentage, color }: { percentage: number; color: string 
       <Animated.View style={[s.progressFill, { width: animatedWidth, backgroundColor: color }]} />
     </View>
   );
+}
+
+// ── Hold note / drop reason ───────────────────────────
+function StatusNote({ item }: { item: WatchingItem }) {
+  if (item.status === 'on_hold' && item.holdNote) {
+    return (
+      <View style={[s.noteRow, { backgroundColor: 'rgba(245,158,11,0.08)' }]}>
+        <Ionicons name="pause-circle" size={12} color="#F59E0B" />
+        <Text style={s.noteText} numberOfLines={2}>{item.holdNote}</Text>
+      </View>
+    );
+  }
+  if (item.status === 'dropped') {
+    return (
+      <View style={[s.noteRow, { backgroundColor: 'rgba(248,113,113,0.08)' }]}>
+        <Ionicons name="close-circle" size={12} color="#F87171" />
+        <Text style={s.noteText} numberOfLines={2}>
+          {item.dropReason}
+          {item.dropRating != null ? `  ·  ★ ${item.dropRating.toFixed(1)}/10` : ''}
+        </Text>
+      </View>
+    );
+  }
+  return null;
 }
 
 // ── Movie Card ────────────────────────────────────────
@@ -136,6 +167,7 @@ function MovieCard({ item, onPress }: { item: WatchingItem; onPress: () => void 
           <Ionicons name={statusCfg.icon} size={14} color={statusCfg.color} />
           <Text style={[s.statusText, { color: statusCfg.color }]}>{statusCfg.label}</Text>
         </View>
+        <StatusNote item={item} />
       </View>
 
       {/* Last watched */}
@@ -149,9 +181,8 @@ function MovieCard({ item, onPress }: { item: WatchingItem; onPress: () => void 
 // ── Series/Anime Card ─────────────────────────────────
 function SeriesCard({ item, onPress }: { item: WatchingItem; onPress: () => void }) {
   const typeCfg = getTypeConfig(itemType(item));
-  const percentage = item.totalEpisodes && item.episodesWatched
-    ? Math.round((item.episodesWatched / item.totalEpisodes) * 100)
-    : 0;
+  const { watched, total, percent: percentage } = getProgress(item);
+  const statusCfg = getStatusConfig(item.status);
 
   return (
     <Pressable style={s.card} onPress={onPress}>
@@ -184,16 +215,22 @@ function SeriesCard({ item, onPress }: { item: WatchingItem; onPress: () => void
               <Text style={{ color: '#52525B' }}> / </Text>
               S{item.totalSeasons} E{item.totalEpisodes}
             </Text>
+            {(item.status === 'rewatching' || item.status === 'on_hold' || item.status === 'dropped') && (
+              <View style={[s.miniBadge, { backgroundColor: statusCfg.bg }]}>
+                <Text style={[s.miniBadgeText, { color: statusCfg.color }]}>{statusCfg.label}</Text>
+              </View>
+            )}
           </View>
 
           {/* Progress bar */}
           <View style={{ marginTop: 8 }}>
             <ProgressBar percentage={percentage} color={typeCfg.color} />
             <View style={s.progressMeta}>
-              <Text style={s.progressLabel}>{item.episodesWatched} of {item.totalEpisodes} episodes</Text>
+              <Text style={s.progressLabel}>{watched} of {total} episodes</Text>
               <Text style={[s.progressPercent, { color: typeCfg.color }]}>{percentage}%</Text>
             </View>
           </View>
+          <StatusNote item={item} />
         </View>
       </View>
 
@@ -271,7 +308,8 @@ export default function WatchingScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [filter, setFilter] = useState<FilterType>('all');
-  const { watchingItems, awaitingItems } = useWatching();
+  const { watchingItems, awaitingItems, onHoldItems, droppedItems } = useWatching();
+  const [droppedOpen, setDroppedOpen] = useState(false);
 
   // Animations
   const fadeIn = useRef(new Animated.Value(0)).current;
@@ -293,9 +331,25 @@ export default function WatchingScreen() {
     ? awaitingItems
     : awaitingItems.filter(i => i.contentType === filter);
 
-  const allItems = [...watchingItems, ...awaitingItems];
-  const watchingCount = watchingItems.length;
-  const awaitingCount = awaitingItems.length;
+  const filteredOnHold = filter === 'all'
+    ? onHoldItems
+    : onHoldItems.filter(i => i.contentType === filter);
+
+  const filteredDropped = filter === 'all'
+    ? droppedItems
+    : droppedItems.filter(i => i.contentType === filter);
+
+  const allItems = [...watchingItems, ...awaitingItems, ...onHoldItems, ...droppedItems];
+  const totalCount = allItems.length;
+  const visibleCount = filteredWatching.length + filteredAwaiting.length
+    + filteredOnHold.length + filteredDropped.length;
+
+  const openProgress = (item: WatchingItem) =>
+    router.push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } } as any);
+  const renderCard = (item: WatchingItem) =>
+    item.mediaType === 'movie'
+      ? <MovieCard key={`${item.mediaType}-${item.tmdbId}`} item={item} onPress={() => openProgress(item)} />
+      : <SeriesCard key={`${item.mediaType}-${item.tmdbId}`} item={item} onPress={() => openProgress(item)} />;
 
   return (
     <ScrollView
@@ -310,7 +364,7 @@ export default function WatchingScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <Text style={s.headerTitle}>Currently Watching</Text>
             <View style={s.countBadge}>
-              <Text style={s.countBadgeText}>{watchingCount + awaitingCount}</Text>
+              <Text style={s.countBadgeText}>{totalCount}</Text>
             </View>
           </View>
         </View>
@@ -359,13 +413,7 @@ export default function WatchingScreen() {
               <Text style={s.sectionCount}>{filteredWatching.length}</Text>
             </View>
 
-            {filteredWatching.map(item => {
-              const goToProgress = () => router.push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } } as any);
-              if (item.contentType === 'movie') {
-                return <MovieCard key={`${item.mediaType}-${item.tmdbId}`} item={item} onPress={goToProgress} />;
-              }
-              return <SeriesCard key={`${item.mediaType}-${item.tmdbId}`} item={item} onPress={goToProgress} />;
-            })}
+            {filteredWatching.map(renderCard)}
           </View>
         )}
 
@@ -386,8 +434,39 @@ export default function WatchingScreen() {
           </View>
         )}
 
+        {/* ── On Hold Section ─────────────────────────── */}
+        {filteredOnHold.length > 0 && (
+          <View style={s.sectionWrap}>
+            <View style={s.sectionHeader}>
+              <View style={s.sectionDotRow}>
+                <View style={[s.sectionDot, { backgroundColor: '#A1A1AA' }]} />
+                <Text style={s.sectionTitle}>On Hold</Text>
+              </View>
+              <Text style={s.sectionCount}>{filteredOnHold.length}</Text>
+            </View>
+            {filteredOnHold.map(renderCard)}
+          </View>
+        )}
+
+        {/* ── Dropped Section (collapsed by default) ──── */}
+        {filteredDropped.length > 0 && (
+          <View style={s.sectionWrap}>
+            <Pressable style={s.sectionHeader} onPress={() => setDroppedOpen(o => !o)}>
+              <View style={s.sectionDotRow}>
+                <View style={[s.sectionDot, { backgroundColor: '#F87171' }]} />
+                <Text style={s.sectionTitle}>Dropped</Text>
+              </View>
+              <View style={s.sectionDotRow}>
+                <Text style={s.sectionCount}>{filteredDropped.length}</Text>
+                <Ionicons name={droppedOpen ? 'chevron-up' : 'chevron-down'} size={16} color="#52525B" />
+              </View>
+            </Pressable>
+            {droppedOpen && filteredDropped.map(renderCard)}
+          </View>
+        )}
+
         {/* ── Empty state when filter has no results ──── */}
-        {filteredWatching.length === 0 && filteredAwaiting.length === 0 && (
+        {visibleCount === 0 && (
           <View style={s.emptyWrap}>
             <View style={s.emptyIconCircle}>
               <Ionicons name="play-circle-outline" size={40} color="#3F3F46" />
@@ -556,6 +635,15 @@ const s = StyleSheet.create({
     marginTop: 6, alignSelf: 'flex-start',
   },
   caughtUpText: { color: '#F59E0B', fontSize: 10, fontWeight: '600' },
+
+  // Status notes
+  noteRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, marginTop: 8,
+  },
+  noteText: { flex: 1, color: '#A1A1AA', fontSize: 11, lineHeight: 15 },
+  miniBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: 6 },
+  miniBadgeText: { fontSize: 9, fontWeight: '800', textTransform: 'uppercase' },
 
   // Last watched
   lastWatchedWrap: {

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, Image, ScrollView, Pressable, StyleSheet,
   Animated,
@@ -9,8 +9,23 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useWatching } from '../../context/WatchingContext';
 import {
-  CONTENT_TYPES, ContentType, WatchingItem, SeasonBreakdown,
+  CONTENT_TYPES, ContentType, SeasonBreakdown, WATCHING_STATUS_LABELS, WatchingStatus,
 } from '../../types';
+import {
+  getProgress, getTotalEpisodes, watchedAtPosition, positionFromWatched, seasonOffset,
+  markSeasonWatchedCount, unmarkSeasonWatchedCount, isEndedStatus,
+} from '../../services/watchingStore';
+import { tmdbGet } from '../../services/tmdb';
+import StatusModal from '../../components/tracking/StatusModal';
+
+const STATUS_COLORS: Record<WatchingStatus, string> = {
+  watching: '#3B82F6',
+  rewatching: '#A855F7',
+  completed: '#10B981',
+  caught_up: '#F59E0B',
+  on_hold: '#F59E0B',
+  dropped: '#F87171',
+};
 
 function getTypeConfig(type: ContentType) {
   return CONTENT_TYPES.find(c => c.key === type) || CONTENT_TYPES[0];
@@ -90,7 +105,10 @@ export default function WatchingProgressScreen() {
   const { id, media_type } = useLocalSearchParams<{ id: string; media_type: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { getItem, updateProgress, markCompleted, markCaughtUp, remove } = useWatching();
+  const {
+    getItem, updateProgress, markCompleted, markCaughtUp, remove,
+    putOnHold, dropItem, resume,
+  } = useWatching();
 
   // Find the item from real store
   const item = getItem(Number(id), media_type || 'movie');
@@ -100,6 +118,8 @@ export default function WatchingProgressScreen() {
   const [episode, setEpisode] = useState(item?.currentEpisode || 1);
   const [movieDone, setMovieDone] = useState(item?.movieCompleted ?? false);
   const [saving, setSaving] = useState(false);
+  const [watched, setWatched] = useState(item?.episodesWatched ?? 0);
+  const [modalMode, setModalMode] = useState<'hold' | 'drop' | null>(null);
 
   // Sync local state once the item arrives (e.g. context still loading on mount)
   const syncedRef = useRef(false);
@@ -109,42 +129,23 @@ export default function WatchingProgressScreen() {
     setSeason(item.currentSeason || 1);
     setEpisode(item.currentEpisode || 1);
     setMovieDone(item.movieCompleted ?? false);
+    setWatched(item.episodesWatched ?? 0);
   }, [item]);
+
+  // Lazily capture the show's TMDb status when missing (older items)
+  useEffect(() => {
+    if (!item || item.mediaType !== 'tv' || item.showStatus) return;
+    tmdbGet<{ status?: string }>(`tv/${item.tmdbId}`)
+      .then(d => { if (d.status) updateProgress(item.tmdbId, item.mediaType, { showStatus: d.status }); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.tmdbId, item?.showStatus]);
 
   // Fade in
   const fadeIn = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(fadeIn, { toValue: 1, duration: 400, useNativeDriver: true }).start();
   }, []);
-
-  // Compute real total episodes from season data (only seasons with actual episodes)
-  const totalEps = useMemo(() => {
-    if (!item) return 1;
-    const seasons = item.seasonEpisodes || [];
-    if (seasons.length > 0) {
-      return seasons.reduce((sum, s) => sum + s.episodes, 0);
-    }
-    return item.totalEpisodes || 1;
-  }, [item]);
-
-  // Calculate total episodes watched based on season/episode
-  const totalWatched = useMemo(() => {
-    if (!item) return 0;
-    const isMovie = item.contentType === 'movie';
-    const seasons = item.seasonEpisodes || [];
-    if (isMovie) return movieDone ? 1 : 0;
-    let count = 0;
-    for (const s of seasons) {
-      if (s.season < season) {
-        count += s.episodes;
-      } else if (s.season === season) {
-        count += episode;
-        break;
-      }
-    }
-    // Clamp to totalEps
-    return Math.min(count || episode, totalEps);
-  }, [item, season, episode, totalEps, movieDone]);
 
   if (!item) {
     return (
@@ -160,8 +161,23 @@ export default function WatchingProgressScreen() {
   }
 
   const typeCfg = getTypeConfig(item.contentType);
-  const isMovie = item.contentType === 'movie';
+  const isMovie = item.mediaType === 'movie';
   const seasons = item.seasonEpisodes || [];
+  const totalEps = getTotalEpisodes(item) || 1;
+  const totalWatched = isMovie ? (movieDone ? 1 : 0) : Math.min(watched, totalEps);
+
+  // Move the position (and the watched count that follows it)
+  const setPos = (sNum: number, ep: number) => {
+    setSeason(sNum);
+    setEpisode(ep);
+    setWatched(watchedAtPosition(seasons, sNum, ep));
+  };
+  const setWatchedCount = (count: number) => {
+    const pos = positionFromWatched(seasons, count);
+    setSeason(pos.season);
+    setEpisode(pos.episode);
+    setWatched(count);
+  };
 
   // Current season's max episodes
   const currentSeasonData = seasons.find(s => s.season === season);
@@ -169,43 +185,71 @@ export default function WatchingProgressScreen() {
 
   // Clamp episode when switching seasons
   const handleSeasonChange = (newSeason: number) => {
-    setSeason(newSeason);
     const newSeasonData = seasons.find(s => s.season === newSeason);
     const newMax = newSeasonData?.episodes || 0;
-    if (newMax === 0) {
-      setEpisode(0);
-    } else if (episode > newMax) {
-      setEpisode(newMax);
-    } else if (episode === 0) {
-      setEpisode(1);
-    }
+    if (newMax === 0) setPos(newSeason, 0);
+    else setPos(newSeason, Math.min(Math.max(episode, 1), newMax));
   };
 
-  const percentage = isMovie
-    ? (movieDone ? 100 : 0)
-    : totalEps > 0 ? Math.min(100, Math.round((totalWatched / totalEps) * 100)) : 0;
+  // Same math as every list/home card
+  const percentage = getProgress({
+    ...item, movieCompleted: movieDone, episodesWatched: totalWatched,
+  }).percent;
+  const allWatched = !isMovie && totalEps > 0 && totalWatched >= totalEps;
+  const status = item.status;
+  const inactive = status === 'on_hold' || status === 'dropped';
+  const statusColor = STATUS_COLORS[status] ?? '#71717A';
 
   // Save progress to real store
   const handleSave = async () => {
     setSaving(true);
     try {
       if (isMovie) {
-        await updateProgress(item.tmdbId, item.mediaType, {
-          movieCompleted: movieDone,
-          status: movieDone ? 'completed' : 'watching',
-        });
         if (movieDone) {
+          await updateProgress(item.tmdbId, item.mediaType, { movieCompleted: true });
           await markCompleted(item.tmdbId, item.mediaType);
+        } else {
+          await updateProgress(item.tmdbId, item.mediaType, {
+            movieCompleted: false,
+            ...(status === 'caught_up' || status === 'completed' ? { status: 'watching' as const } : {}),
+          });
         }
       } else {
+        const finished = totalEps > 0 && totalWatched >= totalEps;
         await updateProgress(item.tmdbId, item.mediaType, {
           currentSeason: season,
           currentEpisode: episode,
           episodesWatched: totalWatched,
         });
+        if (finished) {
+          // Finished everything aired: complete if the show is over, else wait for new episodes
+          let showStatus = item.showStatus;
+          if (!isEndedStatus(showStatus)) {
+            try {
+              const d = await tmdbGet<{ status?: string }>(`tv/${item.tmdbId}`);
+              if (d.status) showStatus = d.status;
+            } catch { /* keep stored status */ }
+          }
+          if (isEndedStatus(showStatus)) {
+            await updateProgress(item.tmdbId, item.mediaType, { showStatus });
+            await markCompleted(item.tmdbId, item.mediaType);
+          } else {
+            await updateProgress(item.tmdbId, item.mediaType, {
+              status: 'caught_up', ...(showStatus ? { showStatus } : {}),
+            });
+          }
+        } else if (status === 'caught_up') {
+          await updateProgress(item.tmdbId, item.mediaType, { status: 'watching' });
+        }
       }
     } catch { /* silently */ }
     setSaving(false);
+    router.back();
+  };
+
+  // Explicit completion for series/anime
+  const handleMarkCompleted = async () => {
+    await markCompleted(item.tmdbId, item.mediaType);
     router.back();
   };
 
@@ -213,6 +257,27 @@ export default function WatchingProgressScreen() {
   const handleCaughtUp = async () => {
     await markCaughtUp(item.tmdbId, item.mediaType);
     router.back();
+  };
+
+  const handleConfirmModal = async (text: string, rating: number | null) => {
+    const mode = modalMode;
+    setModalMode(null);
+    if (mode === 'hold') await putOnHold(item.tmdbId, item.mediaType, text);
+    else if (mode === 'drop') await dropItem(item.tmdbId, item.mediaType, text, rating);
+    router.back();
+  };
+
+  const handleResume = async () => {
+    await resume(item.tmdbId, item.mediaType);
+  };
+
+  // Season card toggle
+  const toggleSeason = (sNum: number, isDone: boolean) => {
+    setWatchedCount(
+      isDone
+        ? unmarkSeasonWatchedCount(seasons, totalWatched, sNum)
+        : markSeasonWatchedCount(seasons, totalWatched, sNum),
+    );
   };
 
   // Remove from watching
@@ -245,11 +310,16 @@ export default function WatchingProgressScreen() {
 
             {/* Title area */}
             <View style={st.heroInfo}>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
               <View style={[st.typePill, { backgroundColor: typeCfg.color + '20' }]}>
                 <Ionicons name={typeCfg.icon as any} size={12} color={typeCfg.color} />
                 <Text style={[st.typePillText, { color: typeCfg.color }]}>
-                  {item.contentType.charAt(0).toUpperCase() + item.contentType.slice(1)}
+                  {item.contentType === 'other' ? 'Docs & Other' : item.contentType.charAt(0).toUpperCase() + item.contentType.slice(1)}
                 </Text>
+              </View>
+              <View style={[st.statusPill, { backgroundColor: statusColor + '20' }]}>
+                <Text style={[st.typePillText, { color: statusColor }]}>{WATCHING_STATUS_LABELS[status]}</Text>
+              </View>
               </View>
               <Text style={st.heroTitle} numberOfLines={2}>{item.title}</Text>
               <Text style={st.heroYear}>{item.year} · ★ {item.rating.toFixed(1)}</Text>
@@ -350,19 +420,19 @@ export default function WatchingProgressScreen() {
                   max={maxEps}
                   label={`Episode in ${currentSeasonData?.title || `Season ${season}`}`}
                   color={typeCfg.color}
-                  onChange={setEpisode}
+                  onChange={(v) => setPos(season, v)}
                 />
                 <View style={st.quickActions}>
-                  <Pressable style={st.quickBtn} onPress={() => setEpisode(1)}>
+                  <Pressable style={st.quickBtn} onPress={() => setPos(season, 1)}>
                     <Text style={st.quickBtnText}>First</Text>
                   </Pressable>
-                  <Pressable style={st.quickBtn} onPress={() => setEpisode(Math.min(episode + 1, maxEps))}>
+                  <Pressable style={st.quickBtn} onPress={() => setPos(season, Math.min(episode + 1, maxEps))}>
                     <Ionicons name="add" size={14} color="#A1A1AA" />
                     <Text style={st.quickBtnText}>Next Ep</Text>
                   </Pressable>
                   <Pressable
                     style={[st.quickBtn, { backgroundColor: typeCfg.color + '15', borderColor: typeCfg.color + '30' }]}
-                    onPress={() => setEpisode(maxEps)}
+                    onPress={() => setPos(season, maxEps)}
                   >
                     <Ionicons name="checkmark-done" size={14} color={typeCfg.color} />
                     <Text style={[st.quickBtnText, { color: typeCfg.color }]}>Finish Season</Text>
@@ -373,15 +443,17 @@ export default function WatchingProgressScreen() {
           )}
 
           {/* ── Season Progress Grid ───────────────────── */}
-          {!isMovie && seasons.length > 1 && (
+          {!isMovie && seasons.length > 0 && (
             <View style={st.section}>
               <Text style={st.sectionTitle}>Season Progress</Text>
               <View style={st.seasonGrid}>
                 {seasons.map(s => {
                   const hasEps = s.episodes > 0;
-                  const isComplete = hasEps && (s.season < season || (s.season === season && episode >= s.episodes));
+                  const epsInSeason = hasEps
+                    ? Math.max(0, Math.min(s.episodes, totalWatched - seasonOffset(seasons, s.season)))
+                    : 0;
+                  const isComplete = hasEps && epsInSeason >= s.episodes;
                   const isCurrent = s.season === season;
-                  const epsInSeason = s.season === season ? episode : (s.season < season ? s.episodes : 0);
                   const pct = hasEps ? Math.min(100, Math.round((epsInSeason / s.episodes) * 100)) : 0;
                   return (
                     <View key={s.season} style={[st.seasonGridItem, isComplete && { borderColor: typeCfg.color + '30' }]}>
@@ -398,6 +470,21 @@ export default function WatchingProgressScreen() {
                       <Text style={st.seasonProgressText}>
                         {hasEps ? `${epsInSeason}/${s.episodes} episodes` : 'Not yet aired'}
                       </Text>
+                      {hasEps && (
+                        <Pressable
+                          style={[st.seasonToggle, isComplete && { borderColor: typeCfg.color + '40', backgroundColor: typeCfg.color + '12' }]}
+                          onPress={() => toggleSeason(s.season, isComplete)}
+                        >
+                          <Ionicons
+                            name={isComplete ? 'close-circle-outline' : 'checkmark-done'}
+                            size={13}
+                            color={isComplete ? '#A1A1AA' : typeCfg.color}
+                          />
+                          <Text style={[st.seasonToggleText, !isComplete && { color: typeCfg.color }]}>
+                            {isComplete ? 'Unmark' : 'Mark watched'}
+                          </Text>
+                        </Pressable>
+                      )}
                     </View>
                   );
                 })}
@@ -405,21 +492,64 @@ export default function WatchingProgressScreen() {
             </View>
           )}
 
-          {/* ── Danger Zone ─────────────────────────────── */}
-          {!isMovie && (
-            <View style={st.section}>
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                <Pressable style={st.dangerBtn} onPress={handleCaughtUp}>
-                  <Ionicons name="hourglass-outline" size={14} color="#F59E0B" />
-                  <Text style={[st.dangerBtnText, { color: '#F59E0B' }]}>Mark Caught Up</Text>
-                </Pressable>
-                <Pressable style={st.dangerBtn} onPress={handleRemove}>
-                  <Ionicons name="trash-outline" size={14} color="#F87171" />
-                  <Text style={[st.dangerBtnText, { color: '#F87171' }]}>Remove</Text>
-                </Pressable>
+          {/* ── Status ─────────────────────────────────── */}
+          <View style={st.section}>
+            <Text style={st.sectionTitle}>Status</Text>
+            {status === 'on_hold' && !!item.holdNote && (
+              <View style={[st.noteBox, { borderColor: '#F59E0B40' }]}>
+                <Ionicons name="pause-circle" size={14} color="#F59E0B" />
+                <Text style={st.noteText}>{item.holdNote}</Text>
               </View>
+            )}
+            {status === 'dropped' && (
+              <View style={[st.noteBox, { borderColor: '#F8717140' }]}>
+                <Ionicons name="close-circle" size={14} color="#F87171" />
+                <Text style={st.noteText}>
+                  {item.dropReason}
+                  {item.dropRating != null ? `  ·  ★ ${item.dropRating.toFixed(1)}/10` : ''}
+                </Text>
+              </View>
+            )}
+            <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
+              {inactive ? (
+                <Pressable style={st.dangerBtn} onPress={handleResume}>
+                  <Ionicons name="play-circle-outline" size={14} color="#10B981" />
+                  <Text style={[st.dangerBtnText, { color: '#10B981' }]}>Resume</Text>
+                </Pressable>
+              ) : (
+                <>
+                  <Pressable style={st.dangerBtn} onPress={() => setModalMode('hold')}>
+                    <Ionicons name="pause-circle-outline" size={14} color="#F59E0B" />
+                    <Text style={[st.dangerBtnText, { color: '#F59E0B' }]}>Put On Hold</Text>
+                  </Pressable>
+                  <Pressable style={st.dangerBtn} onPress={() => setModalMode('drop')}>
+                    <Ionicons name="close-circle-outline" size={14} color="#F87171" />
+                    <Text style={[st.dangerBtnText, { color: '#F87171' }]}>Drop</Text>
+                  </Pressable>
+                </>
+              )}
             </View>
-          )}
+            {!isMovie && (
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                <Pressable style={st.dangerBtn} onPress={handleMarkCompleted}>
+                  <Ionicons name="checkmark-done-circle-outline" size={14} color="#10B981" />
+                  <Text style={[st.dangerBtnText, { color: '#10B981' }]}>Mark Completed</Text>
+                </Pressable>
+                {status !== 'caught_up' && (
+                  <Pressable style={st.dangerBtn} onPress={handleCaughtUp}>
+                    <Ionicons name="hourglass-outline" size={14} color="#F59E0B" />
+                    <Text style={[st.dangerBtnText, { color: '#F59E0B' }]}>Mark Caught Up</Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+              <Pressable style={st.dangerBtn} onPress={handleRemove}>
+                <Ionicons name="trash-outline" size={14} color="#F87171" />
+                <Text style={[st.dangerBtnText, { color: '#F87171' }]}>Remove</Text>
+              </Pressable>
+            </View>
+          </View>
 
         </Animated.View>
       </ScrollView>
@@ -432,9 +562,19 @@ export default function WatchingProgressScreen() {
           disabled={saving}
         >
           <Ionicons name="checkmark" size={20} color="#000" />
-          <Text style={st.saveBtnText}>{saving ? 'Saving...' : 'Save Progress'}</Text>
+          <Text style={st.saveBtnText}>
+            {saving ? 'Saving...' : allWatched ? 'Save & Finish' : 'Save Progress'}
+          </Text>
         </Pressable>
       </View>
+
+      <StatusModal
+        visible={modalMode !== null}
+        mode={modalMode ?? 'hold'}
+        title={item.title}
+        onCancel={() => setModalMode(null)}
+        onConfirm={handleConfirmModal}
+      />
     </View>
   );
 }
@@ -456,6 +596,18 @@ const st = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
     justifyContent: 'center', alignItems: 'center',
   },
+  statusPill: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  noteBox: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 12, borderRadius: 12,
+    backgroundColor: '#121212', borderWidth: 1, marginBottom: 12,
+  },
+  noteText: { flex: 1, color: '#D4D4D8', fontSize: 13, lineHeight: 18 },
+  seasonToggle: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
+    marginTop: 10, paddingVertical: 7, borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  },
+  seasonToggleText: { color: '#A1A1AA', fontSize: 11, fontWeight: '700' },
   backLink: { marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: 'rgba(16,185,129,0.1)' },
 
   section: { paddingHorizontal: 20, marginTop: 24 },

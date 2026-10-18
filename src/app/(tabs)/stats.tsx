@@ -72,7 +72,7 @@ export default function StatsScreen() {
   const {
     lifetimeStats, currentStreak, longestStreak,
     availableYears, history,
-    getPeriodStats, getGenreStats,
+    getPeriodStats, getGenreStats, directorStats,
   } = useWatching();
 
   // Year/month filter
@@ -225,7 +225,7 @@ export default function StatsScreen() {
                   </View>
                   <View style={s.periodItem}>
                     <Text style={[s.periodValue, { color: '#F59E0B' }]}>{periodStats.other}</Text>
-                    <Text style={s.periodLabel}>Other</Text>
+                    <Text style={s.periodLabel}>Docs & Other</Text>
                   </View>
                 </View>
                 <View style={s.periodHours}>
@@ -242,6 +242,25 @@ export default function StatsScreen() {
                 <View style={s.genresCard}>
                   {genreStats.slice(0, 5).map(g => (
                     <GenreBar key={g.name} name={g.name} percentage={g.percentage} color={g.color} count={g.count} />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {/* ── Top Directors ───────────────────────── */}
+            {directorStats.length > 0 && (
+              <View style={s.sectionWrap}>
+                <Text style={s.sectionTitle}>Top Directors</Text>
+                <View style={s.genresCard}>
+                  {directorStats.map((d, idx) => (
+                    <View key={d.name} style={s.directorRow}>
+                      <Text style={s.directorRank}>{idx + 1}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={s.directorName} numberOfLines={1}>{d.name}</Text>
+                        <Text style={s.directorTitles} numberOfLines={1}>{d.titles.slice(0, 3).join(' · ')}</Text>
+                      </View>
+                      <Text style={s.directorCount}>{d.count}</Text>
+                    </View>
                   ))}
                 </View>
               </View>
@@ -291,6 +310,12 @@ export default function StatsScreen() {
 }
 
 const s = StyleSheet.create({
+  directorRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
+  directorRank: { color: '#52525B', fontSize: 13, fontWeight: '800', width: 18, textAlign: 'center' },
+  directorName: { color: '#E5E2E1', fontSize: 14, fontWeight: '700' },
+  directorTitles: { color: '#52525B', fontSize: 11, fontWeight: '500', marginTop: 2 },
+  directorCount: { color: '#10B981', fontSize: 16, fontWeight: '800' },
+
   header: { paddingHorizontal: 20, marginBottom: 16 },
   headerTitle: { color: '#fff', fontSize: 28, fontWeight: '800', letterSpacing: -0.8 },
 

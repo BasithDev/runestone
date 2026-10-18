@@ -11,8 +11,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useWatchlist } from '../../context/WatchlistContext';
 import { useWatching } from '../../context/WatchingContext';
 import { detectContentType, parseLocalDate, SeasonBreakdown } from '../../types';
+import { tmdbGet, REGION } from '../../services/tmdb';
 
-const KEY = process.env.EXPO_PUBLIC_TMDB_API_KEY;
 const IMG_W500 = 'https://image.tmdb.org/t/p/w500';
 const IMG_W780 = 'https://image.tmdb.org/t/p/w780';
 const IMG_ORIG = 'https://image.tmdb.org/t/p/original';
@@ -269,26 +269,26 @@ export default function ContentDetailsScreen() {
 
   // ── Fetch ─────────────────────────────────────────
   const fetchDetails = useCallback(async () => {
-    if (!KEY || !id) { setError(true); setLoading(false); return; }
+    if (!id) { setError(true); setLoading(false); return; }
     try {
-      const url = `https://api.themoviedb.org/3/${type}/${id}?api_key=${KEY}&language=en-US&append_to_response=credits,watch%2Fproviders,similar,recommendations`;
-      const res = await fetch(url);
-      const json: Details = await res.json();
+      const json = await tmdbGet<Details>(`${type}/${id}`, {
+        append_to_response: 'credits,watch/providers,similar,recommendations',
+      });
       setDetails(json);
 
       // Fetch collection if movie belongs to one
       if (type === 'movie' && json.belongs_to_collection?.id) {
-        const colRes = await fetch(`https://api.themoviedb.org/3/collection/${json.belongs_to_collection.id}?api_key=${KEY}`);
-        const colJson = await colRes.json();
-        if (colJson.parts?.length > 1) setCollection(colJson);
+        const colJson = await tmdbGet<Collection>(`collection/${json.belongs_to_collection.id}`).catch(() => null);
+        if (colJson && colJson.parts?.length > 1) setCollection(colJson);
       }
 
       // Fetch per-season episode info for TV
       if (type === 'tv' && json.number_of_seasons) {
-        const seasonPromises = Array.from({ length: json.number_of_seasons }, (_, i) =>
-          fetch(`https://api.themoviedb.org/3/tv/${id}/season/${i + 1}?api_key=${KEY}`).then(r => r.json()).catch(() => null)
+        const seasonResults = await Promise.all(
+          Array.from({ length: json.number_of_seasons }, (_, i) =>
+            tmdbGet<any>(`tv/${id}/season/${i + 1}`).catch(() => null)
+          )
         );
-        const seasonResults = await Promise.all(seasonPromises);
         const seasons: SeasonInfo[] = seasonResults
           .filter(Boolean)
           .map((sr: any) => ({
@@ -357,9 +357,9 @@ export default function ContentDetailsScreen() {
   const seasons = details.number_of_seasons;
   const episodes = details.number_of_episodes;
 
-  // Watch providers — use US region first, fallback
+  // Watch providers — India only (no fallback to other countries)
   const providerData = details['watch/providers']?.results || {};
-  const regionData = providerData['US'] || providerData[Object.keys(providerData)[0]] || {};
+  const regionData = providerData[REGION] || {};
   const streamProviders: Provider[] = regionData.flatrate || [];
   const rentProviders: Provider[] = regionData.rent || [];
   const buyProviders: Provider[] = regionData.buy || [];

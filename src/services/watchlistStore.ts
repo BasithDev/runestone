@@ -6,6 +6,8 @@ const STORAGE_KEY = '@runestone_watchlist';
 const POSTER_DIR = `${FileSystem.documentDirectory}watchlist_posters/`;
 
 // ── Types ─────────────────────────────────────────────
+export type WatchlistPriority = 'high' | 'medium' | 'low';
+
 export interface WatchlistItem {
   id: number;
   media_type: 'movie' | 'tv';
@@ -22,6 +24,8 @@ export interface WatchlistItem {
   overview: string;
   added_at: string;                // ISO timestamp
   local_poster_uri: string | null; // local file path (native only)
+  priority?: WatchlistPriority;    // missing on old items → treat as 'medium'
+  why_added?: string;              // user's note on why it was saved
 }
 
 type UniqueKey = string; // `${media_type}-${id}`

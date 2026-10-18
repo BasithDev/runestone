@@ -17,7 +17,23 @@ export const CONTENT_TYPES: ContentTypeConfig[] = [
 ];
 
 // ── Watch Status ───────────────────────────────────────
-export type WatchingStatus = 'watching' | 'completed' | 'caught_up';
+// 'plan_to_watch' is represented by the watchlist (services/watchlistStore).
+export type WatchingStatus =
+  | 'watching'
+  | 'completed'
+  | 'caught_up'   // series: watched everything aired, awaiting new season
+  | 'on_hold'     // requires holdNote
+  | 'dropped'     // requires dropReason, optional dropRating
+  | 'rewatching';
+
+export const WATCHING_STATUS_LABELS: Record<WatchingStatus, string> = {
+  watching: 'Watching',
+  completed: 'Completed',
+  caught_up: 'Caught Up',
+  on_hold: 'On Hold',
+  dropped: 'Dropped',
+  rewatching: 'Rewatching',
+};
 
 // ── Season Breakdown ───────────────────────────────────
 export interface SeasonBreakdown {
@@ -50,6 +66,12 @@ export interface WatchingItem {
   rating: number;
   runtime?: number | null;       // minutes for movie
   episodeRuntime?: number | null; // avg episode runtime
+  // Status details
+  holdNote?: string;      // why it's on hold (status 'on_hold')
+  dropReason?: string;    // why it was dropped (status 'dropped')
+  dropRating?: number;    // user's rating out of 10.0 when dropped
+  rewatchCount?: number;  // completed watches before this one
+  directors?: string[];   // director names (movies) / creators (tv)
   // Timestamps
   startedAt: string;   // ISO date — when added to watching
   lastWatched: string;  // ISO date — last progress update
@@ -71,6 +93,8 @@ export interface WatchHistoryEntry {
   episodeRuntime?: number | null;
   completedAt: string; // ISO date
   year: string;
+  directors?: string[];  // director names (movies) / creators (tv)
+  isRewatch?: boolean;   // true when this entry logs a rewatch
 }
 
 // ── Computed Stats ─────────────────────────────────────
@@ -100,6 +124,30 @@ export interface GenreStats {
   count: number;
   percentage: number;
   color: string;
+}
+
+// ── Upcoming list (persisted) ──────────────────────────
+// Unreleased titles the user is waiting for (India release dates).
+// OTT info and scheduled notification ids are owned by the alerts services,
+// keyed by `${mediaType}-${tmdbId}` (see titleKey).
+export interface OttInfo {
+  digitalDate?: string | null;  // YYYY-MM-DD, TMDb India "Digital" release
+  providers: string[];          // India streaming (flatrate) provider names
+  checkedAt: string;            // ISO — last time OTT info was refreshed
+  arrivedAt?: string | null;    // ISO — when providers first appeared
+}
+
+export interface UpcomingItem {
+  tmdbId: number;
+  mediaType: 'movie' | 'tv';
+  title: string;
+  posterPath: string | null;
+  releaseDate: string | null;   // YYYY-MM-DD, India theatrical (fallback: primary)
+  addedAt: string;              // ISO
+}
+
+export function titleKey(mediaType: string, tmdbId: number): string {
+  return `${mediaType}-${tmdbId}`;
 }
 
 // ── TMDb Media Item (shared search result type) ───────

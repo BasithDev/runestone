@@ -12,6 +12,7 @@ import {
   computeStreak, getAvailableYears,
   WatchingPatch, DirectorStat,
 } from '../services/watchingStore';
+import { buildLibrary, LibraryEntry } from '../services/statsInsights';
 
 interface WatchingContextType {
   // State
@@ -21,6 +22,8 @@ interface WatchingContextType {
   droppedItems: WatchingItem[];
   history: WatchHistoryEntry[];
   watchLog: WatchLogEntry[];
+  /** Everything watched (any progress), newest activity first — for the Stats screen. */
+  library: LibraryEntry[];
   loading: boolean;
 
   // Computed
@@ -80,6 +83,7 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
   // Everything watched counts (not only completed): history + items with progress + watch log.
   const lifetimeStats = useMemo(() => computeLifetimeStats(history, items, watchLog), [history, items, watchLog]);
   const streak = useMemo(() => computeStreak(watchLog), [watchLog]);
+  const library = useMemo(() => buildLibrary(history, items, watchLog), [history, items, watchLog]);
   const availableYears = useMemo(() => getAvailableYears(watchLog), [watchLog]);
   const directorStats = useMemo(() => computeDirectorStats(history, items), [history, items]);
 
@@ -159,6 +163,7 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
     droppedItems,
     history,
     watchLog,
+    library,
     loading,
     lifetimeStats,
     currentStreak: streak.current,
@@ -181,7 +186,7 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
     getPeriodStats,
     getGenreStats,
   }), [
-    watchingItems, awaitingItems, onHoldItems, droppedItems, history, watchLog, loading, lifetimeStats, streak,
+    watchingItems, awaitingItems, onHoldItems, droppedItems, history, watchLog, library, loading, lifetimeStats, streak,
     availableYears, directorStats,
     startWatching, updateProgressCb, markCompletedCb, markCaughtUpCb, putOnHoldCb, dropCb, resumeCb,
     advanceCb, removeCb, isItemWatching, getItemCb, getHistoryEntries, loadData, getPeriodStats, getGenreStats,

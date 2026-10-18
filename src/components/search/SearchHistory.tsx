@@ -1,6 +1,7 @@
 import React, { memo, useCallback } from 'react';
-import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { RecentTitle } from './useSearchHistory';
 
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w185';
@@ -20,7 +21,13 @@ const TitleThumb = memo(function TitleThumb({ t, onOpen }: { t: RecentTitle; onO
   return (
     <Pressable style={styles.thumb} onPress={() => onOpen(t)}>
       {t.poster_path ? (
-        <Image source={{ uri: `${TMDB_IMG}${t.poster_path}` }} style={styles.thumbImg} resizeMode="cover" />
+        <Image
+          source={{ uri: `${TMDB_IMG}${t.poster_path}` }} style={styles.thumbImg}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          transition={150}
+          recyclingKey={String(t.id)}
+        />
       ) : (
         <View style={[styles.thumbImg, styles.thumbEmpty]}>
           <Ionicons name="film-outline" size={20} color="#52525B" />

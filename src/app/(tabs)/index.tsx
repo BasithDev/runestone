@@ -1,17 +1,17 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   ScrollView,
   Text,
   View,
-  Image,
   FlatList,
   Pressable,
   Animated,
   StyleSheet,
   Dimensions,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
+import { useGuardedPush, useTabBarPadding } from '../../components/navGuard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useWatching } from '../../context/WatchingContext';
@@ -36,7 +36,7 @@ interface MediaItem {
 }
 
 // ── Constants ──────────────────────────────────────────
-const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
+const TMDB_IMG = 'https://image.tmdb.org/t/p/w342';
 const CARD_W = 150;
 const CARD_H = 220;
 const CARD_GAP = 12;
@@ -53,8 +53,7 @@ function Skeleton({ shimmer }: { shimmer: Animated.Value }) {
 }
 
 // ── Poster card ────────────────────────────────────────
-function PosterCard({ item }: { item: MediaItem }) {
-  const router = useRouter();
+const PosterCard = memo(function PosterCard({ item, onOpen }: { item: MediaItem; onOpen: (item: MediaItem, mediaType: string) => void }) {
   const title = item.title || item.name || '';
   const date = item.release_date || item.first_air_date || '';
   const month = date ? parseLocalDate(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
@@ -63,7 +62,7 @@ function PosterCard({ item }: { item: MediaItem }) {
   return (
     <Pressable
       style={{ marginRight: CARD_GAP }}
-      onPress={() => router.push({ pathname: '/content/[id]', params: { id: item.id, media_type: mediaType } } as any)}
+      onPress={() => onOpen(item, mediaType)}
     >
       <View
         className="rounded-2xl overflow-hidden bg-surface-light border border-white/5"
@@ -72,7 +71,10 @@ function PosterCard({ item }: { item: MediaItem }) {
         <Image
           source={{ uri: `${TMDB_IMG}${item.poster_path}` }}
           style={StyleSheet.absoluteFill}
-          resizeMode="cover"
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          transition={150}
+          recyclingKey={String(item.id)}
         />
         <LinearGradient
           colors={['transparent', 'rgba(0,0,0,0.85)']}
@@ -89,8 +91,70 @@ function PosterCard({ item }: { item: MediaItem }) {
       </View>
     </Pressable>
   );
+});
+
+interface WatchingCardProps {
+  item: WatchingItem;
+  onOpen: (item: WatchingItem) => void;
+  onAdvance: (tmdbId: number, mediaType: 'movie' | 'tv') => void;
 }
 
+const WatchingCard = memo(function WatchingCard({ item, onOpen, onAdvance }: WatchingCardProps) {
+  const isMovie = item.mediaType === 'movie';
+  const { percent: percentage, watched, total } = getProgress(item);
+  const atEnd = !isMovie && total > 0 && watched >= total;
+  const open = () => onOpen(item);
+  return (
+    <Pressable style={{ marginRight: CARD_GAP }} onPress={open}>
+      <View
+        className="rounded-2xl overflow-hidden bg-surface-light border border-white/5"
+        style={{ width: CARD_W, height: CARD_H }}
+      >
+        {item.posterUrl ? (
+          <Image
+            source={{ uri: item.posterUrl }}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            transition={150}
+            recyclingKey={`${item.mediaType}-${item.tmdbId}`}
+          />
+        ) : null}
+        <LinearGradient
+          colors={['transparent', 'rgba(0,0,0,0.9)']}
+          locations={[0.4, 1]}
+          style={[StyleSheet.absoluteFill, { justifyContent: 'flex-end', padding: 10 }]}
+        >
+          <Text className="text-white text-[12px] font-bold mb-1" numberOfLines={1}>{item.title}</Text>
+          <View style={{ height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.15)', marginTop: 2 }}>
+            <View style={{ height: '100%', borderRadius: 2, backgroundColor: '#10B981', width: `${percentage}%` }} />
+          </View>
+          <Text style={{ color: '#71717A', fontSize: 9, fontWeight: '700', marginTop: 3 }}>
+            {isMovie
+              ? (item.movieCompleted ? 'Completed' : 'In Progress')
+              : `S${item.currentSeason} E${item.currentEpisode} • ${percentage}%`}
+          </Text>
+        </LinearGradient>
+        <StatusPill status={item.status} solid style={{ position: 'absolute', top: 8, left: 8 }} />
+        {!isMovie && (
+          atEnd ? (
+            <Pressable onPress={open} hitSlop={6} style={quickStyles.finish}>
+              <Ionicons name="checkmark-done" size={12} color="#000" />
+              <Text style={quickStyles.finishText}>Finish</Text>
+            </Pressable>
+          ) : (
+            <Pressable onPress={() => onAdvance(item.tmdbId, item.mediaType)} hitSlop={6} style={quickStyles.plus}>
+              <Ionicons name="add" size={18} color="#000" />
+            </Pressable>
+          )
+        )}
+      </View>
+    </Pressable>
+  );
+});
+
+const watchingKey = (item: WatchingItem) => `${item.mediaType}-${item.tmdbId}`;
+const upcomingKey = (i: MediaItem) => String(i.id);
 
 const quickStyles = StyleSheet.create({
   plus: {
@@ -105,8 +169,10 @@ const quickStyles = StyleSheet.create({
 });
 
 export default function HomeScreen() {
-  const router = useRouter();
+  const push = useGuardedPush();
   const insets = useSafeAreaInsets();
+  const bottomPad = useTabBarPadding(8);
+  const [attempt, setAttempt] = useState(0);
   const [upcoming, setUpcoming] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -123,7 +189,7 @@ export default function HomeScreen() {
       { label: 'Total Time', value: timeStr, icon: 'time-outline' as const, color: '#10B981' },
       { label: 'Movies', value: String(lifetimeStats.movies), icon: 'film-outline' as const, color: '#10B981' },
       { label: 'Series', value: String(lifetimeStats.series + lifetimeStats.anime), icon: 'tv-outline' as const, color: '#10B981' },
-      { label: 'Streak', value: currentStreak > 0 ? `${currentStreak} days` : '0 days', icon: 'flame' as const, color: '#10B981' },
+      { label: 'Streak', value: `${currentStreak} ${currentStreak === 1 ? 'day' : 'days'}`, icon: 'flame' as const, color: '#10B981' },
     ];
   }, [lifetimeStats, currentStreak]);
 
@@ -134,16 +200,22 @@ export default function HomeScreen() {
 
   // ── Shimmer pulse ────────────────────────────────────
   useEffect(() => {
-    Animated.loop(
+    if (!loading) return;
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(shimmer, { toValue: 0.6, duration: 900, useNativeDriver: true }),
         Animated.timing(shimmer, { toValue: 0.25, duration: 900, useNativeDriver: true }),
       ])
-    ).start();
-  }, [shimmer]);
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [shimmer, loading]);
 
   // ── Fetch TMDb upcoming ──────────────────────────────
   useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setError(false);
     (async () => {
       try {
         // Fetch pages 1 and 2 (India region) to get a wider selection of unreleased movies
@@ -152,9 +224,10 @@ export default function HomeScreen() {
           tmdbGet<{ results?: MediaItem[] }>('movie/upcoming', { region: REGION, page: 2 }),
         ]);
 
+        if (!alive) return;
         const allResults = [...(json1.results || []), ...(json2.results || [])];
 
-        if (allResults.length) {
+        {
           const todayStr = localDateKey();
           
           // Filter strictly for future releases (unreleased)
@@ -166,31 +239,62 @@ export default function HomeScreen() {
           const uniqueUpcoming = Array.from(new Map(strictlyUpcoming.map(item => [item.id, item])).values());
 
           // Sort by nearest release date (ascending)
-          uniqueUpcoming.sort((a, b) => {
-            const dateA = a.release_date ? new Date(a.release_date).getTime() : Infinity;
-            const dateB = b.release_date ? new Date(b.release_date).getTime() : Infinity;
-            return dateA - dateB;
-          });
+          uniqueUpcoming.sort((a, b) => (a.release_date || '').localeCompare(b.release_date || ''));
 
           setUpcoming(uniqueUpcoming.slice(0, 10));
-        } else {
-          setError(true);
         }
-      } catch { setError(true); }
+      } catch { if (alive) setError(true); }
       finally {
-        setLoading(false);
-        Animated.parallel([
-          Animated.timing(fadeIn, { toValue: 1, duration: 500, useNativeDriver: true }),
-          Animated.timing(slideUp, { toValue: 0, duration: 500, useNativeDriver: true }),
-        ]).start();
+        if (alive) {
+          setLoading(false);
+          Animated.parallel([
+            Animated.timing(fadeIn, { toValue: 1, duration: 500, useNativeDriver: true }),
+            Animated.timing(slideUp, { toValue: 0, duration: 500, useNativeDriver: true }),
+          ]).start();
+        }
       }
     })();
-  }, []);
+    return () => { alive = false; };
+  }, [attempt, fadeIn, slideUp]);
+
+  const openPoster = useCallback(
+    (item: MediaItem, mediaType: string) => push({ pathname: '/content/[id]', params: { id: item.id, media_type: mediaType } }),
+    [push],
+  );
+  const openWatching = useCallback(
+    (item: WatchingItem) => push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } }),
+    [push],
+  );
+  const renderPoster = useCallback(({ item }: { item: MediaItem }) => <PosterCard item={item} onOpen={openPoster} />, [openPoster]);
+  const renderWatching = useCallback(
+    ({ item }: { item: WatchingItem }) => <WatchingCard item={item} onOpen={openWatching} onAdvance={advance} />,
+    [openWatching, advance],
+  );
+  const renderSkeleton = useCallback(() => <Skeleton shimmer={shimmer} />, [shimmer]);
+  const recentWatching = useMemo(() => watchingItems.slice(0, 5), [watchingItems]);
+  const viewAll = useMemo(() => (
+    <Pressable style={{ marginRight: CARD_GAP }} onPress={() => push('/upcoming')}>
+      <View
+        className="rounded-2xl overflow-hidden border border-dashed items-center justify-center"
+        style={{
+          width: CARD_W,
+          height: CARD_H,
+          borderColor: 'rgba(16,185,129,0.25)',
+          backgroundColor: 'rgba(16,185,129,0.04)',
+        }}
+      >
+        <View className="w-11 h-11 rounded-full bg-emerald-500/10 items-center justify-center mb-2.5">
+          <Ionicons name="arrow-forward" size={22} color="#10B981" />
+        </View>
+        <Text className="text-emerald-500 text-[13px] font-bold tracking-wide">View All</Text>
+      </View>
+    </Pressable>
+  ), [push]);
 
   return (
     <ScrollView
       className="flex-1 bg-black"
-      contentContainerStyle={{ paddingTop: insets.top + 6, paddingBottom: 85 }}
+      contentContainerStyle={{ paddingTop: insets.top + 6, paddingBottom: bottomPad }}
       showsVerticalScrollIndicator={false}
     >
       {/* ── Header ──────────────────────────────────── */}
@@ -233,7 +337,7 @@ export default function HomeScreen() {
       <View className="mb-7">
         <View className="flex-row justify-between items-center px-5 mb-3.5">
           <Text className="text-white text-lg font-bold -tracking-tight">Upcoming & Anticipated</Text>
-          <Pressable onPress={() => router.push('/upcoming' as any)}>
+          <Pressable onPress={() => push('/upcoming')}>
             <Text className="text-emerald-500 text-xs font-semibold">See All</Text>
           </Pressable>
         </View>
@@ -245,43 +349,33 @@ export default function HomeScreen() {
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ paddingHorizontal: 20 }}
-            renderItem={() => <Skeleton shimmer={shimmer} />}
+            renderItem={renderSkeleton}
+            scrollEnabled={false}
           />
         ) : error ? (
           <View className="mx-5 bg-surface rounded-2xl border border-white/5 p-7 items-center">
             <Ionicons name="cloud-offline-outline" size={28} color="#52525B" />
             <Text className="text-zinc-200 text-sm font-semibold mt-2.5">Unable to load content</Text>
             <Text className="text-zinc-600 text-xs mt-1">Check your connection or API key.</Text>
+            <Pressable onPress={() => setAttempt(n => n + 1)} hitSlop={8} className="mt-3 px-4 py-2 rounded-full bg-emerald-500/10">
+              <Text className="text-emerald-500 text-xs font-bold">Try again</Text>
+            </Pressable>
           </View>
         ) : (
           <Animated.View style={{ opacity: fadeIn, transform: [{ translateY: slideUp }] }}>
             <FlatList
               data={upcoming}
-              keyExtractor={(i) => String(i.id)}
+              keyExtractor={upcomingKey}
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={{ paddingHorizontal: 20 }}
               snapToInterval={CARD_W + CARD_GAP}
               decelerationRate="fast"
-              renderItem={({ item }) => <PosterCard item={item} />}
-              ListFooterComponent={
-                <Pressable style={{ marginRight: CARD_GAP }} onPress={() => router.push('/upcoming' as any)}>
-                  <View
-                    className="rounded-2xl overflow-hidden border border-dashed items-center justify-center"
-                    style={{
-                      width: CARD_W,
-                      height: CARD_H,
-                      borderColor: 'rgba(16,185,129,0.25)',
-                      backgroundColor: 'rgba(16,185,129,0.04)',
-                    }}
-                  >
-                    <View className="w-11 h-11 rounded-full bg-emerald-500/10 items-center justify-center mb-2.5">
-                      <Ionicons name="arrow-forward" size={22} color="#10B981" />
-                    </View>
-                    <Text className="text-emerald-500 text-[13px] font-bold tracking-wide">View All</Text>
-                  </View>
-                </Pressable>
-              }
+              renderItem={renderPoster}
+              ListFooterComponent={viewAll}
+              initialNumToRender={4}
+              windowSize={5}
+              removeClippedSubviews
             />
           </Animated.View>
         )}
@@ -292,7 +386,7 @@ export default function HomeScreen() {
         <View className="flex-row justify-between items-center px-5 mb-3.5">
           <Text className="text-white text-lg font-bold -tracking-tight">Currently Watching</Text>
           {watchingItems.length > 0 && (
-            <Pressable onPress={() => router.navigate('/(tabs)/watching' as any)}>
+            <Pressable onPress={() => push('/(tabs)/watching')}>
               <Text className="text-emerald-500 text-xs font-semibold">See All</Text>
             </Pressable>
           )}
@@ -300,62 +394,11 @@ export default function HomeScreen() {
 
         {watchingItems.length > 0 ? (
           <FlatList
-            data={watchingItems.slice(0, 5)}
-            keyExtractor={(item) => `${item.mediaType}-${item.tmdbId}`}
+            data={recentWatching}
+            keyExtractor={watchingKey}
             horizontal
             showsHorizontalScrollIndicator={false}
-            renderItem={({ item }) => {
-              const isMovie = item.mediaType === 'movie';
-              const { percent: percentage, watched, total } = getProgress(item);
-              const atEnd = !isMovie && total > 0 && watched >= total;
-              const openProgress = () => router.push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } } as any);
-              return (
-                <Pressable
-                  style={{ marginRight: CARD_GAP }}
-                  onPress={openProgress}
-                >
-                  <View
-                    className="rounded-2xl overflow-hidden bg-surface-light border border-white/5"
-                    style={{ width: CARD_W, height: CARD_H }}
-                  >
-                    <Image
-                      source={{ uri: item.posterUrl || undefined }}
-                      style={StyleSheet.absoluteFill}
-                      resizeMode="cover"
-                    />
-                    <LinearGradient
-                      colors={['transparent', 'rgba(0,0,0,0.9)']}
-                      locations={[0.4, 1]}
-                      style={[StyleSheet.absoluteFill, { justifyContent: 'flex-end', padding: 10 }]}
-                    >
-                      <Text className="text-white text-[12px] font-bold mb-1" numberOfLines={1}>{item.title}</Text>
-                      {/* Progress bar */}
-                      <View style={{ height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.15)', marginTop: 2 }}>
-                        <View style={{ height: '100%', borderRadius: 2, backgroundColor: '#10B981', width: `${percentage}%` }} />
-                      </View>
-                      <Text style={{ color: '#71717A', fontSize: 9, fontWeight: '700', marginTop: 3 }}>
-                        {isMovie
-                          ? (item.movieCompleted ? 'Completed' : 'In Progress')
-                          : `S${item.currentSeason} E${item.currentEpisode} • ${percentage}%`}
-                      </Text>
-                    </LinearGradient>
-                    <StatusPill status={item.status} solid style={{ position: 'absolute', top: 8, left: 8 }} />
-                    {!isMovie && (
-                      atEnd ? (
-                        <Pressable onPress={openProgress} hitSlop={6} style={quickStyles.finish}>
-                          <Ionicons name="checkmark-done" size={12} color="#000" />
-                          <Text style={quickStyles.finishText}>Finish</Text>
-                        </Pressable>
-                      ) : (
-                        <Pressable onPress={() => { advance(item.tmdbId, item.mediaType); }} hitSlop={6} style={quickStyles.plus}>
-                          <Ionicons name="add" size={18} color="#000" />
-                        </Pressable>
-                      )
-                    )}
-                  </View>
-                </Pressable>
-              );
-            }}
+            renderItem={renderWatching}
           />
         ) : (
           <View className="bg-surface rounded-3xl border border-white/5 p-7 items-center">
@@ -367,7 +410,7 @@ export default function HomeScreen() {
               Start exploring trending titles or search to begin tracking your watchlist.
             </Text>
             <Pressable
-              onPress={() => router.replace('/search' as any)}
+              onPress={() => push('/search')}
               className="flex-row items-center justify-center bg-emerald-500 rounded-xl py-3.5 px-5 mt-5 w-full gap-1.5"
             >
               <Ionicons name="search" size={15} color="#000" />

@@ -1,11 +1,12 @@
 import React from 'react';
-import { Animated, Image, StyleSheet, Text, View } from 'react-native';
+import { Animated, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { WatchlistItem } from '../../services/watchlistStore';
 import { priorityOf, priorityMeta } from '../lists/priority';
 import PressableScale from './PressableScale';
 import { useEntrance } from './useEntrance';
-import { COLORS, posterUriOf, runtimeLabel, timeAgo, yearOf } from './utils';
+import { COLORS, itemKey, posterUriOf, runtimeLabel, timeAgo, yearOf } from './utils';
 
 interface Props {
   item: WatchlistItem;
@@ -25,7 +26,7 @@ function WatchlistListItem({ item, index, onPress, onLongPress }: Props) {
       <PressableScale style={s.card} onPress={() => onPress(item)} onLongPress={() => onLongPress(item)} scaleTo={0.98}>
         <View style={[s.stripe, { backgroundColor: pri.color }]} />
         {uri ? (
-          <Image source={{ uri }} style={s.poster} />
+          <Image source={{ uri }} style={s.poster} contentFit="cover" cachePolicy="memory-disk" transition={150} recyclingKey={itemKey(item)} />
         ) : (
           <View style={[s.poster, s.fallback]}><Ionicons name="film-outline" size={24} color="#52525B" /></View>
         )}

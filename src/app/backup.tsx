@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useGoBack } from '../components/navGuard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useWatching } from '../context/WatchingContext';
@@ -30,7 +30,7 @@ function CountsRow({ counts }: { counts: BackupCounts }) {
 }
 
 export default function BackupScreen() {
-  const router = useRouter();
+  const goBack = useGoBack();
   const insets = useSafeAreaInsets();
   const watching = useWatching();
   const watchlist = useWatchlist();
@@ -116,7 +116,7 @@ export default function BackupScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
       <View style={[st.header, { paddingTop: insets.top + 10 }]}>
-        <Pressable onPress={() => router.back()} style={st.backBtn}>
+        <Pressable onPress={goBack} style={st.backBtn}>
           <Ionicons name="arrow-back" size={20} color="#fff" />
         </Pressable>
         <Text style={st.headerTitle}>Backup & Restore</Text>

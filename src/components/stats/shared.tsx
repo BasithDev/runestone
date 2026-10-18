@@ -74,12 +74,14 @@ export function ScalePressable({
  */
 export function CountUp({ value, style, format }: { value: number; style?: any; format?: (n: number) => string }) {
   const [n, setN] = useState(0);
+  const shown = useRef(0); // last displayed value, so updates count from here instead of restarting at 0
+  shown.current = n;
   useEffect(() => {
-    const start = Date.now(), duration = 900;
+    const start = Date.now(), duration = 900, from = shown.current;
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
       const t = Math.min(1, (Date.now() - start) / duration);
-      setN(value * (1 - Math.pow(1 - t, 3))); // ease-out cubic
+      setN(from + (value - from) * (1 - Math.pow(1 - t, 3))); // ease-out cubic
       if (t < 1) timer = setTimeout(tick, 50);
     };
     timer = setTimeout(tick, 50);

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useGoBack, useGuardedPush } from '../components/navGuard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useOttData } from '../components/alerts/useOtt';
@@ -52,19 +52,20 @@ function EventCard({ e, index, onPress }: { e: OttEvent; index: number; onPress:
 }
 
 export default function AlertsScreen() {
-  const router = useRouter();
+  const goBack = useGoBack();
+  const push = useGuardedPush();
   const insets = useSafeAreaInsets();
   const { events, titles, unread, lastRefresh } = useOttData();
   const [refreshing, setRefreshing] = useState(false);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    try { await refreshAll({ force: true }); } finally { setRefreshing(false); }
+    try { await refreshAll({ force: true }); } catch { /* keep the list as is */ } finally { setRefreshing(false); }
   };
 
   const open = (e: OttEvent) => {
     if (!e.read) markRead(e.id);
-    router.push({ pathname: '/content/[id]', params: { id: e.tmdbId, media_type: e.mediaType } } as any);
+    push({ pathname: '/content/[id]', params: { id: e.tmdbId, media_type: e.mediaType } });
   };
 
   const { fresh, earlier } = useMemo(() => ({
@@ -75,7 +76,7 @@ export default function AlertsScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={8} style={styles.iconBtn}>
+        <Pressable onPress={goBack} hitSlop={8} style={styles.iconBtn}>
           <Ionicons name="chevron-back" size={22} color="#FFFFFF" />
         </Pressable>
         <Text style={styles.headerTitle}>Alerts</Text>

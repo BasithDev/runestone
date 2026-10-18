@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { MONTH_NAMES, WatchLogEntry } from '../../types';
 import { dailyActivity, DayActivity, formatDuration } from '../../services/statsInsights';
-import { EMPTY_CELL, HEAT_STEPS, SectionTitle, sh } from './shared';
+import { HEAT_STEPS, SectionTitle, sh } from './shared';
 
 const WEEKS = 18;
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];

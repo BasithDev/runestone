@@ -1,11 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useCallback, useState, useRef, useEffect } from 'react';
 import {
-  View, Text, Image, ScrollView, Pressable, StyleSheet,
+  View, Text, ScrollView, Pressable, StyleSheet,
   Animated,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useWatching } from '../../context/WatchingContext';
 import {
@@ -144,8 +145,28 @@ export default function WatchingProgressScreen() {
   // Fade in
   const fadeIn = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.timing(fadeIn, { toValue: 1, duration: 400, useNativeDriver: true }).start();
-  }, []);
+    const anim = Animated.timing(fadeIn, { toValue: 1, duration: 400, useNativeDriver: true });
+    anim.start();
+    return () => anim.stop();
+  }, [fadeIn]);
+
+  const goBack = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/');
+  }, [router]);
+
+  // Actions that leave the screen run once: a double-tap must not pop two screens.
+  const leaving = useRef(false);
+  const leave = useCallback(async (work: () => Promise<void>) => {
+    if (leaving.current) return;
+    leaving.current = true;
+    try {
+      await work();
+      goBack();
+    } catch {
+      leaving.current = false;
+    }
+  }, [goBack]);
 
   if (!item) {
     return (
@@ -153,7 +174,7 @@ export default function WatchingProgressScreen() {
         <Ionicons name="alert-circle-outline" size={40} color="#52525B" />
         <Text style={{ color: '#A1A1AA', fontSize: 16, fontWeight: '600', marginTop: 12 }}>Content not found</Text>
         <Text style={{ color: '#52525B', fontSize: 12, marginTop: 4 }}>Start watching from a content details page</Text>
-        <Pressable onPress={() => router.back()} style={st.backLink}>
+        <Pressable onPress={goBack} style={st.backLink}>
           <Text style={{ color: '#10B981', fontWeight: '600' }}>Go Back</Text>
         </Pressable>
       </View>
@@ -201,7 +222,7 @@ export default function WatchingProgressScreen() {
   const statusColor = STATUS_COLORS[status] ?? '#71717A';
 
   // Save progress to real store
-  const handleSave = async () => {
+  const handleSave = () => leave(async () => {
     setSaving(true);
     try {
       if (isMovie) {
@@ -244,27 +265,21 @@ export default function WatchingProgressScreen() {
       }
     } catch { /* silently */ }
     setSaving(false);
-    router.back();
-  };
+  });
 
   // Explicit completion for series/anime
-  const handleMarkCompleted = async () => {
-    await markCompleted(item.tmdbId, item.mediaType);
-    router.back();
-  };
+  const handleMarkCompleted = () => leave(() => markCompleted(item.tmdbId, item.mediaType));
 
   // Mark caught up
-  const handleCaughtUp = async () => {
-    await markCaughtUp(item.tmdbId, item.mediaType);
-    router.back();
-  };
+  const handleCaughtUp = () => leave(() => markCaughtUp(item.tmdbId, item.mediaType));
 
-  const handleConfirmModal = async (text: string, rating: number | null) => {
+  const handleConfirmModal = (text: string, rating: number | null) => {
     const mode = modalMode;
     setModalMode(null);
-    if (mode === 'hold') await putOnHold(item.tmdbId, item.mediaType, text);
-    else if (mode === 'drop') await dropItem(item.tmdbId, item.mediaType, text, rating);
-    router.back();
+    return leave(async () => {
+      if (mode === 'hold') await putOnHold(item.tmdbId, item.mediaType, text);
+      else if (mode === 'drop') await dropItem(item.tmdbId, item.mediaType, text, rating);
+    });
   };
 
   const handleResume = async () => {
@@ -281,10 +296,7 @@ export default function WatchingProgressScreen() {
   };
 
   // Remove from watching
-  const handleRemove = async () => {
-    await remove(item.tmdbId, item.mediaType);
-    router.back();
-  };
+  const handleRemove = () => leave(() => remove(item.tmdbId, item.mediaType));
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -296,7 +308,13 @@ export default function WatchingProgressScreen() {
 
           {/* ── Hero header ─────────────────────────────── */}
           <View style={st.hero}>
-            <Image source={{ uri: item.posterUrl || undefined }} style={st.heroPoster} />
+            <Image
+              source={{ uri: item.posterUrl || undefined }}
+              style={st.heroPoster}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={150}
+            />
             <LinearGradient
               colors={['transparent', 'rgba(0,0,0,0.9)', '#000']}
               locations={[0, 0.6, 1]}
@@ -304,7 +322,7 @@ export default function WatchingProgressScreen() {
             />
 
             {/* Back */}
-            <Pressable onPress={() => router.back()} style={[st.backBtn, { top: insets.top + 10 }]}>
+            <Pressable onPress={goBack} style={[st.backBtn, { top: insets.top + 10 }]}>
               <Ionicons name="arrow-back" size={20} color="#fff" />
             </Pressable>
 
@@ -582,7 +600,7 @@ export default function WatchingProgressScreen() {
 // ── Styles ─────────────────────────────────────────────
 const st = StyleSheet.create({
   hero: { height: 320, position: 'relative' },
-  heroPoster: { width: '100%', height: '100%', resizeMode: 'cover' },
+  heroPoster: { width: '100%', height: '100%' },
   heroInfo: { position: 'absolute', bottom: 20, left: 20, right: 20 },
   heroTitle: { color: '#fff', fontSize: 24, fontWeight: '800', letterSpacing: -0.5, marginTop: 8 },
   heroYear: { color: '#71717A', fontSize: 13, fontWeight: '600', marginTop: 4 },

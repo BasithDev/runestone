@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import { GenreStats } from '../../types';
 import { DirectorStat } from '../../services/watchingStore';
 import { ACCENT, GrowBar, SectionTitle, sh } from './shared';

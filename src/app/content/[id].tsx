@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View, Text, Image, ScrollView, Pressable,
-  ActivityIndicator, FlatList, Dimensions, StyleSheet, Linking,
-  Animated, Modal,
+  View, Text, ScrollView, Pressable,
+  ActivityIndicator, FlatList, StyleSheet,
+  Animated,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useGuardedPush } from '../../components/navGuard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,10 +24,10 @@ import { PirataOne_400Regular } from '@expo-google-fonts/pirata-one';
 import { getSpecialTheme, SpecialThemeContext, useSpecialTheme } from '../../components/special/specialThemes';
 import BountyPoster from '../../components/special/BountyPoster';
 
-const IMG_W500 = 'https://image.tmdb.org/t/p/w500';
+const IMG_W185 = 'https://image.tmdb.org/t/p/w185';
+const IMG_W342 = 'https://image.tmdb.org/t/p/w342';
 const IMG_W780 = 'https://image.tmdb.org/t/p/w780';
-const IMG_ORIG = 'https://image.tmdb.org/t/p/original';
-const { width: SW } = Dimensions.get('window');
+const IMG_W1280 = 'https://image.tmdb.org/t/p/w1280';
 
 // ── Helpers ───────────────────────────────────────────
 function fmt$(n: number) {
@@ -110,7 +112,7 @@ function CastCard({ item, onPress }: { item: CastMember; onPress?: () => void })
     <Pressable style={s.castCard} onPress={onPress}>
       <View style={s.castAvatarWrap}>
         {item.profile_path ? (
-          <Image source={{ uri: `${IMG_W500}${item.profile_path}` }} style={s.castAvatar} />
+          <Image cachePolicy="memory-disk" transition={150} contentFit="cover" source={{ uri: `${IMG_W185}${item.profile_path}` }} style={s.castAvatar} />
         ) : (
           <View style={[s.castAvatar, s.castAvatarFallback]}>
             <Ionicons name="person" size={22} color="#52525B" />
@@ -128,7 +130,7 @@ function PosterCard({ item, onPress }: { item: SimilarItem | CollectionPart; onP
   return (
     <Pressable onPress={onPress} style={s.miniCard}>
       {(item as any).poster_path ? (
-        <Image source={{ uri: `${IMG_W500}${(item as any).poster_path}` }} style={s.miniPoster} resizeMode="cover" />
+        <Image cachePolicy="memory-disk" transition={150} contentFit="cover" source={{ uri: `${IMG_W342}${(item as any).poster_path}` }} style={s.miniPoster} />
       ) : (
         <View style={[s.miniPoster, s.miniPosterFallback]}>
           <Ionicons name="film-outline" size={24} color="#52525B" />
@@ -151,7 +153,7 @@ function PosterCard({ item, onPress }: { item: SimilarItem | CollectionPart; onP
 function ProviderLogo({ p }: { p: Provider }) {
   return (
     <View style={s.providerWrap}>
-      <Image source={{ uri: `${IMG_W500}${p.logo_path}` }} style={s.providerLogo} />
+      <Image cachePolicy="memory-disk" transition={150} contentFit="cover" source={{ uri: `${IMG_W185}${p.logo_path}` }} style={s.providerLogo} />
       <Text style={s.providerName} numberOfLines={1}>{p.provider_name}</Text>
     </View>
   );
@@ -178,6 +180,7 @@ const TRACKED_STYLES: Record<WatchingStatus, StatusStyle> = {
 export default function ContentDetailsScreen() {
   const { id, media_type, from } = useLocalSearchParams<{ id: string; media_type: string; from?: string }>();
   const router = useRouter();
+  const push = useGuardedPush();
   const insets = useSafeAreaInsets();
   const type = (media_type === 'tv' ? 'tv' : 'movie') as 'movie' | 'tv';
   const isFromWatchlist = from === 'watchlist';
@@ -207,22 +210,31 @@ export default function ContentDetailsScreen() {
   const trackedItem = getItem(Number(id), type);
   const historyCount = getHistoryEntries(Number(id), type).length;
 
+  const goBack = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/');
+  }, [router]);
+
+  const statusBusy = useRef(false);
   const handleStatusPress = () => {
-    if (!details) return;
+    if (!details || statusBusy.current) return;
     if (trackedItem) {
-      router.push({ pathname: '/watching-progress/[id]', params: { id: details.id, media_type: type } } as any);
+      push({ pathname: '/watching-progress/[id]', params: { id: details.id, media_type: type } });
       return;
     }
 
+    statusBusy.current = true;
     Animated.timing(statusOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start(async () => {
       try {
         // Same builder as the quick-track sheet, so both paths produce identical items.
         // The store flips status to 'rewatching' when the title is already in history.
         await startWatching(await fetchTrackable(type, details.id));
       } catch {
+        statusBusy.current = false;
         Animated.timing(statusOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
         return;
       }
+      statusBusy.current = false;
 
       // Remove from watchlist if present
       if (inWatchlist) removeItem(details.id, type);
@@ -259,26 +271,30 @@ export default function ContentDetailsScreen() {
   };
 
   const navigateToPerson = (personId: number, name: string) => {
-    router.push({ pathname: '/search', params: { person_id: personId, person_name: name } } as any);
+    push({ pathname: '/search', params: { person_id: personId, person_name: name } });
   };
 
   const navigateToCompany = (companyId: number, name: string) => {
-    router.push({ pathname: '/search', params: { company_id: companyId, company_name: name } } as any);
+    push({ pathname: '/search', params: { company_id: companyId, company_name: name } });
   };
 
   // ── Fetch ─────────────────────────────────────────
-  const fetchDetails = useCallback(async () => {
+  const fetchDetails = useCallback(async (isAlive: () => boolean) => {
     if (!id) { setError(true); setLoading(false); return; }
+    setLoading(true);
+    setError(false);
     try {
       const json = await tmdbGet<Details>(`${type}/${id}`, {
         append_to_response: 'credits,watch/providers,similar,recommendations',
       });
+      if (!isAlive()) return;
       setDetails(json);
+      setLoading(false); // render now; collection + seasons fill in below
 
       // Fetch collection if movie belongs to one
       if (type === 'movie' && json.belongs_to_collection?.id) {
         const colJson = await tmdbGet<Collection>(`collection/${json.belongs_to_collection.id}`).catch(() => null);
-        if (colJson && colJson.parts?.length > 1) setCollection(colJson);
+        if (isAlive() && colJson && colJson.parts?.length > 1) setCollection(colJson);
       }
 
       // Fetch per-season episode info for TV
@@ -288,6 +304,7 @@ export default function ContentDetailsScreen() {
             tmdbGet<any>(`tv/${id}/season/${i + 1}`).catch(() => null)
           )
         );
+        if (!isAlive()) return;
         const seasons: SeasonInfo[] = seasonResults
           .filter(Boolean)
           .map((sr: any) => ({
@@ -299,16 +316,18 @@ export default function ContentDetailsScreen() {
         setSeasonDetails(seasons);
       }
     } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
+      if (isAlive()) { setError(true); setLoading(false); }
     }
   }, [id, type]);
 
-  useEffect(() => { fetchDetails(); }, [fetchDetails]);
+  useEffect(() => {
+    let alive = true;
+    fetchDetails(() => alive);
+    return () => { alive = false; };
+  }, [fetchDetails]);
 
   const navigateToContent = (itemId: number, mediaType: string) => {
-    router.push({ pathname: '/content/[id]', params: { id: itemId, media_type: mediaType } } as any);
+    push({ pathname: '/content/[id]', params: { id: itemId, media_type: mediaType } });
   };
 
   // ── Loading ───────────────────────────────────────
@@ -326,7 +345,7 @@ export default function ContentDetailsScreen() {
       <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40 }}>
         <Ionicons name="cloud-offline-outline" size={40} color="#52525B" />
         <Text style={{ color: '#E5E2E1', fontSize: 16, fontWeight: '700', marginTop: 16 }}>Failed to load</Text>
-        <Pressable onPress={() => router.back()} style={s.backBtn}>
+        <Pressable onPress={goBack} style={s.backBtn}>
           <Text style={{ color: '#10B981', fontWeight: '600' }}>Go Back</Text>
         </Pressable>
       </View>
@@ -351,7 +370,6 @@ export default function ContentDetailsScreen() {
   const overview = details.overview || '';
   const cast = details.credits?.cast?.slice(0, 15) || [];
   const directors = details.credits?.crew?.filter(c => c.job === 'Director') || [];
-  const producers = details.credits?.crew?.filter(c => c.job === 'Producer' || c.job === 'Executive Producer').slice(0, 3) || [];
   const prodCompanies = details.production_companies?.filter(p => p.logo_path).slice(0, 6) || [];
   const budget = type === 'movie' ? fmt$(details.budget || 0) : null;
   const revenue = type === 'movie' ? fmt$(details.revenue || 0) : null;
@@ -391,9 +409,9 @@ export default function ContentDetailsScreen() {
         {/* ── HERO ───────────────────────────────────────── */}
         <View style={{ height: 420 }}>
           {details.backdrop_path ? (
-            <Image source={{ uri: `${IMG_ORIG}${details.backdrop_path}` }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+            <Image cachePolicy="memory-disk" transition={150} contentFit="cover" source={{ uri: `${IMG_W1280}${details.backdrop_path}` }} style={StyleSheet.absoluteFill} />
           ) : details.poster_path ? (
-            <Image source={{ uri: `${IMG_W780}${details.poster_path}` }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+            <Image cachePolicy="memory-disk" transition={150} contentFit="cover" source={{ uri: `${IMG_W780}${details.poster_path}` }} style={StyleSheet.absoluteFill} />
           ) : null}
           <LinearGradient
             colors={theme ? theme.heroGradient : ['rgba(0,0,0,0.1)', 'rgba(0,0,0,0.5)', '#000']}
@@ -404,7 +422,7 @@ export default function ContentDetailsScreen() {
 
           {/* Back button */}
           <Pressable
-            onPress={() => router.back()}
+            onPress={goBack}
             style={[s.backCircle, { top: insets.top + 10 }]}
           >
             <Ionicons name="arrow-back" size={20} color="#fff" />
@@ -413,13 +431,12 @@ export default function ContentDetailsScreen() {
           {/* Poster + meta bottom area */}
           <View style={s.heroBottom}>
             {details.poster_path && (
-              <Image
-                source={{ uri: `${IMG_W500}${details.poster_path}` }}
+              <Image cachePolicy="memory-disk" transition={150} contentFit="cover"
+                source={{ uri: `${IMG_W342}${details.poster_path}` }}
                 style={[
                   s.heroPoster,
                   theme && { borderWidth: 2, borderColor: theme.accent },
                 ]}
-                resizeMode="cover"
               />
             )}
             <View style={s.heroMeta}>
@@ -643,7 +660,7 @@ export default function ContentDetailsScreen() {
                 {directors.map(d => (
                   <Pressable key={d.id} style={s.crewRow} onPress={isFromWatchlist ? undefined : () => navigateToPerson(d.id, d.name)}>
                     {d.profile_path ? (
-                      <Image source={{ uri: `${IMG_W500}${d.profile_path}` }} style={s.crewAvatar} />
+                      <Image cachePolicy="memory-disk" transition={150} contentFit="cover" source={{ uri: `${IMG_W185}${d.profile_path}` }} style={s.crewAvatar} />
                     ) : (
                       <View style={[s.crewAvatar, s.castAvatarFallback]}>
                         <Ionicons name="person" size={16} color="#52525B" />
@@ -664,7 +681,7 @@ export default function ContentDetailsScreen() {
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20 }} contentContainerStyle={{ paddingHorizontal: 20, gap: 14, alignItems: 'center' }}>
                 {prodCompanies.map(c => (
                   <Pressable key={c.id} style={s.companyWrap} onPress={isFromWatchlist ? undefined : () => navigateToCompany(c.id, c.name)}>
-                    <Image source={{ uri: `${IMG_W500}${c.logo_path}` }} style={s.companyLogo} resizeMode="contain" />
+                    <Image cachePolicy="memory-disk" transition={150} source={{ uri: `${IMG_W185}${c.logo_path}` }} style={s.companyLogo} contentFit="contain" />
                     <Text style={s.companyName} numberOfLines={1}>{c.name}</Text>
                   </Pressable>
                 ))}

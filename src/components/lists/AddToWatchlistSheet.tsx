@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Modal, View, Text, Pressable, TextInput, ActivityIndicator, StyleSheet,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { WatchlistPriority } from '../../services/watchlistStore';
@@ -36,10 +36,10 @@ export default function AddToWatchlistSheet({
   }, [visible, initialPriority, initialWhy]);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+    <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onCancel}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior="padding"
       >
         <Pressable style={s.overlay} onPress={onCancel}>
           <Pressable style={s.content} onPress={e => e.stopPropagation()}>

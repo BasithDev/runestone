@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
-import { FlatList, Image, StyleSheet, Text, View } from 'react-native';
+import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { WatchlistItem } from '../../services/watchlistStore';
@@ -24,7 +25,7 @@ const UpNextCard = React.memo(function UpNextCard({ item, onPress, onLongPress }
   return (
     <PressableScale onPress={() => onPress(item)} onLongPress={() => onLongPress(item)} style={s.card}>
       {uri ? (
-        <Image source={{ uri }} style={StyleSheet.absoluteFill} />
+        <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" transition={150} recyclingKey={itemKey(item)} />
       ) : (
         <View style={s.fallback}><Ionicons name="film-outline" size={28} color="#52525B" /></View>
       )}
@@ -78,6 +79,9 @@ function UpNextCarousel({ items, onPress, onLongPress }: Props) {
         snapToAlignment="start"
         contentContainerStyle={{ paddingHorizontal: 20 }}
         ItemSeparatorComponent={Sep}
+        initialNumToRender={4}
+        windowSize={5}
+        removeClippedSubviews
       />
     </View>
   );

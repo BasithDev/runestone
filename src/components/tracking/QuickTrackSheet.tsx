@@ -1,16 +1,23 @@
-// Quick-track sheet: log a title straight from search results, no details page.
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// Quick-track sheet: pick what to do with a title straight from search results.
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Modal, View, Text, Image, Pressable, ScrollView, ActivityIndicator, Animated,
-  PanResponder, StyleSheet, Dimensions, Easing,
+  Alert, Animated, Dimensions, Easing, KeyboardAvoidingView, Modal, PanResponder, Platform,
+  Pressable, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWatching } from '../../context/WatchingContext';
 import { useWatchlist } from '../../context/WatchlistContext';
 import { useUpcoming } from '../../context/UpcomingContext';
-import { AddToWatchlistSheet } from '../lists';
-import StatusPill from './StatusPill';
+import { STATUS_STYLE } from './StatusPill';
+import StatusModal, { StatusModalMode } from './StatusModal';
+import ActionTile from './ActionTile';
+import EpisodePicker from './EpisodePicker';
+import Expandable from './Expandable';
+import SheetHero, { SHEET_BG } from './SheetHero';
+import SheetSkeleton from './SheetSkeleton';
+import WatchlistStep from './WatchlistStep';
 import { WatchlistPriority } from '../../services/watchlistStore';
 import {
   isEndedStatus, localDateKey, positionFromWatched, watchedAtPosition,
@@ -33,56 +40,50 @@ export interface QuickTrackSheetProps {
   onClose: () => void;
   /** Called after an action succeeded, with a short message for a toast/snackbar. */
   onDone?: (message: string) => void;
+  /** Optional: called when the user picks "Open details" (e.g. to record a recent title). */
+  onOpenDetails?: (target: QuickTrackTarget) => void;
 }
 
 const ACCENT = '#10B981';
 const SCREEN_H = Dimensions.get('window').height;
+const MAX_H = SCREEN_H * 0.88;
+const NEUTRAL_PILL = '#A1A1AA';
+const noop = () => {};
 
-function Skeleton() {
-  const pulse = useRef(new Animated.Value(0.35)).current;
-  useEffect(() => {
-    const loop = Animated.loop(Animated.sequence([
-      Animated.timing(pulse, { toValue: 0.8, duration: 700, useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 0.35, duration: 700, useNativeDriver: true }),
-    ]));
-    loop.start();
-    return () => loop.stop();
-  }, [pulse]);
-  return (
-    <Animated.View style={{ opacity: pulse, gap: 10 }}>
-      {[0, 1, 2].map(i => <View key={i} style={s.skeletonRow} />)}
-    </Animated.View>
-  );
-}
-
-interface ActionProps {
+interface PillProps {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
-  sub?: string;
-  onPress: () => void;
+  color: string;
+  busy?: boolean;
   disabled?: boolean;
-  primary?: boolean;
+  onPress: () => void;
 }
-function ActionButton({ icon, label, sub, onPress, disabled, primary }: ActionProps) {
+const PillButton = memo(function PillButton({ icon, label, color, busy, disabled, onPress }: PillProps) {
   return (
     <Pressable
       onPress={onPress}
-      disabled={disabled}
-      style={({ pressed }) => [s.action, primary && s.actionPrimary, disabled && { opacity: 0.45 }, pressed && { opacity: 0.75 }]}
+      disabled={disabled || busy}
+      style={({ pressed }) => [
+        s.pillBtn, { borderColor: `${color}55`, backgroundColor: `${color}18` },
+        (disabled && !busy) && { opacity: 0.4 }, pressed && { opacity: 0.7 },
+      ]}
     >
-      <Ionicons name={icon} size={20} color={primary ? '#000' : ACCENT} />
-      <View style={{ flex: 1 }}>
-        <Text style={[s.actionLabel, primary && { color: '#000' }]}>{label}</Text>
-        {sub ? <Text style={[s.actionSub, primary && { color: 'rgba(0,0,0,0.6)' }]}>{sub}</Text> : null}
-      </View>
+      <Ionicons name={busy ? 'hourglass-outline' : icon} size={14} color={color} />
+      <Text style={[s.pillBtnText, { color }]}>{label}</Text>
     </Pressable>
   );
-}
+});
 
-export default function QuickTrackSheet({ visible, target, onClose, onDone }: QuickTrackSheetProps) {
+type RunKey =
+  | 'open' | 'watched' | 'watching' | 'caughtUp' | 'completed' | 'from'
+  | 'watchlist' | 'upcoming' | 'hold' | 'drop' | 'resume' | 'remove';
+
+export default function QuickTrackSheet({ visible, target, onClose, onDone, onOpenDetails }: QuickTrackSheetProps) {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const {
-    startWatching, updateProgress, markCompleted, markCaughtUp, resume, getItem, getHistoryEntries,
+    startWatching, updateProgress, markCompleted, markCaughtUp, resume, putOnHold, dropItem, remove,
+    getItem, getHistoryEntries,
   } = useWatching();
   const { isInWatchlist, addItem: addToWatchlist, removeItem: removeFromWatchlist } = useWatchlist();
   const { add: addUpcoming, isSaved: isUpcomingSaved } = useUpcoming();
@@ -95,13 +96,15 @@ export default function QuickTrackSheet({ visible, target, onClose, onDone }: Qu
   const [bundle, setBundle] = useState<TrackableBundle | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState<RunKey | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showFrom, setShowFrom] = useState(false);
-  const [showWatchlist, setShowWatchlist] = useState(false);
+  const [step, setStep] = useState<'main' | 'watchlist'>('main');
+  const [statusMode, setStatusMode] = useState<StatusModalMode | null>(null);
   const [pickSeason, setPickSeason] = useState(1);
   const [pickEpisode, setPickEpisode] = useState(1);
   const [retryKey, setRetryKey] = useState(0);
+  const lastRun = useRef<{ key: RunKey; work: () => Promise<string> } | null>(null);
 
   const tmdbId = target?.tmdbId;
   const mediaType = target?.mediaType;
@@ -113,33 +116,47 @@ export default function QuickTrackSheet({ visible, target, onClose, onDone }: Qu
   const upcomingSaved = target ? isUpcomingSaved(target.mediaType, target.tmdbId) : false;
 
   // ── Show / hide animation ───────────────────────────
+  const enter = useCallback(() => {
+    slide.setValue(SCREEN_H);
+    Animated.parallel([
+      Animated.timing(backdrop, { toValue: 1, duration: 220, useNativeDriver: true }),
+      Animated.spring(slide, { toValue: 0, tension: 65, friction: 11, useNativeDriver: true }),
+    ]).start();
+  }, [slide, backdrop]);
+
   useEffect(() => {
     if (visible) {
       setMounted(true);
-      slide.setValue(SCREEN_H);
       backdrop.setValue(0);
-      Animated.parallel([
-        Animated.timing(backdrop, { toValue: 1, duration: 200, useNativeDriver: true }),
-        Animated.timing(slide, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      ]).start();
+      enter();
     } else if (mounted) {
       Animated.parallel([
-        Animated.timing(backdrop, { toValue: 0, duration: 160, useNativeDriver: true }),
-        Animated.timing(slide, { toValue: SCREEN_H, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(backdrop, { toValue: 0, duration: 180, useNativeDriver: true }),
+        Animated.timing(slide, { toValue: SCREEN_H, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
       ]).start(() => setMounted(false));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  // Drag the handle down to dismiss.
+  // The sheet is hidden while StatusModal shows (no stacked Modals); slide back in after.
+  const prevStatusMode = useRef<StatusModalMode | null>(null);
+  useEffect(() => {
+    if (prevStatusMode.current && !statusMode && visible) enter();
+    prevStatusMode.current = statusMode;
+  }, [statusMode, visible, enter]);
+
+  // Drag the header down to dismiss; resists when pulled up.
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const pan = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onPanResponderMove: (_, g) => { if (g.dy > 0) slide.setValue(g.dy); },
+    onMoveShouldSetPanResponder: (_, g) => g.dy > 4 && Math.abs(g.dy) > Math.abs(g.dx),
+    onPanResponderMove: (_, g) => slide.setValue(g.dy > 0 ? g.dy : g.dy / 8),
     onPanResponderRelease: (_, g) => {
-      if (g.dy > 90 || g.vy > 0.9) onCloseRef.current();
-      else Animated.timing(slide, { toValue: 0, duration: 150, useNativeDriver: true }).start();
+      if (g.dy > 100 || g.vy > 0.8) onCloseRef.current();
+      else Animated.spring(slide, { toValue: 0, tension: 120, friction: 12, useNativeDriver: true }).start();
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(slide, { toValue: 0, tension: 120, friction: 12, useNativeDriver: true }).start();
     },
   }), [slide]);
 
@@ -150,14 +167,22 @@ export default function QuickTrackSheet({ visible, target, onClose, onDone }: Qu
     setBundle(null);
     setLoadError(false);
     setLoading(true);
-    setSaveError(null);
-    setShowFrom(false);
     fetchTrackableBundle(mediaType, tmdbId)
       .then(b => { if (!cancelled) setBundle(b); })
       .catch(() => { if (!cancelled) setLoadError(true); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [visible, tmdbId, mediaType, retryKey]);
+
+  // Fresh UI state for each opened title.
+  useEffect(() => {
+    if (!visible) return;
+    setSaveError(null);
+    setShowFrom(false);
+    setStep('main');
+    setStatusMode(null);
+    setBusy(null);
+  }, [visible, tmdbId, mediaType]);
 
   const seasons = useMemo(
     () => (bundle?.item.seasonEpisodes ?? []).filter(x => x.episodes > 0).sort((a, b) => a.season - b.season),
@@ -185,17 +210,17 @@ export default function QuickTrackSheet({ visible, target, onClose, onDone }: Qu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bundle]);
 
-  const seasonEpCount = seasons.find(x => x.season === pickSeason)?.episodes ?? 999;
-  const chooseSeason = (n: number) => {
+  const chooseSeason = useCallback((n: number) => {
     setPickSeason(n);
-    const max = seasons.find(x => x.season === n)?.episodes ?? 999;
+    const max = seasons.find(x => x.season === n)?.episodes ?? 9999;
     setPickEpisode(e => Math.min(Math.max(1, e), max));
-  };
+  }, [seasons]);
 
   // ── Actions ─────────────────────────────────────────
-  const run = useCallback(async (work: () => Promise<string>) => {
-    if (saving) return;
-    setSaving(true);
+  const run = useCallback(async (key: RunKey, work: () => Promise<string>) => {
+    if (busy) return;
+    lastRun.current = { key, work };
+    setBusy(key);
     setSaveError(null);
     try {
       const message = await work();
@@ -204,9 +229,14 @@ export default function QuickTrackSheet({ visible, target, onClose, onDone }: Qu
     } catch {
       setSaveError("Couldn't save. Please try again.");
     } finally {
-      setSaving(false);
+      setBusy(null);
     }
-  }, [saving, onDone, onClose]);
+  }, [busy, onDone, onClose]);
+
+  const retryLast = useCallback(() => {
+    const l = lastRun.current;
+    if (l) run(l.key, l.work);
+  }, [run]);
 
   /** Start tracking if needed; removes the title from the watchlist like the details screen. */
   const ensureTracked = async () => {
@@ -219,7 +249,7 @@ export default function QuickTrackSheet({ visible, target, onClose, onDone }: Qu
 
   const name = target?.title ?? '';
 
-  const watchedMovie = () => run(async () => {
+  const watchedMovie = () => run('watched', async () => {
     if (!target) return '';
     await ensureTracked();
     await updateProgress(target.tmdbId, 'movie', { movieCompleted: true });
@@ -227,28 +257,28 @@ export default function QuickTrackSheet({ visible, target, onClose, onDone }: Qu
     return historyCount > 0 ? `Logged a rewatch of ${name}` : `Marked ${name} as watched`;
   });
 
-  const watchingNow = () => run(async () => {
+  const watchingNow = () => run('watching', async () => {
     if (!target) return '';
     if (tracked) await resume(target.tmdbId, target.mediaType);
     else await ensureTracked();
     return `Started watching ${name}`;
   });
 
-  const caughtUp = () => run(async () => {
+  const caughtUp = () => run('caughtUp', async () => {
     if (!target) return '';
     await ensureTracked();
     await markCaughtUp(target.tmdbId, 'tv');
     return `Marked ${name} as caught up`;
   });
 
-  const completed = () => run(async () => {
+  const completed = () => run('completed', async () => {
     if (!target) return '';
     await ensureTracked();
     await markCompleted(target.tmdbId, 'tv');
     return `Marked ${name} as completed`;
   });
 
-  const watchingFrom = () => run(async () => {
+  const watchingFrom = () => run('from', async () => {
     if (!target || !bundle) return '';
     await ensureTracked();
     const watched = watchedAtPosition(seasons, pickSeason, pickEpisode);
@@ -263,41 +293,30 @@ export default function QuickTrackSheet({ visible, target, onClose, onDone }: Qu
     return `${name}: watched through S${pickSeason} E${pickEpisode}`;
   });
 
-  const confirmWatchlist = async (priority: WatchlistPriority, whyAdded: string) => {
-    if (!target || saving) return;
-    setSaving(true);
-    setSaveError(null);
-    try {
-      const it = bundle?.item;
-      await addToWatchlist({
-        priority,
-        why_added: whyAdded.trim() || undefined,
-        id: target.tmdbId,
-        media_type: target.mediaType,
-        title: target.title,
-        poster_path: target.posterPath,
-        backdrop_path: bundle?.meta.backdropPath ?? null,
-        vote_average: it?.rating ?? 0,
-        vote_count: bundle?.meta.voteCount ?? 0,
-        runtime: it?.runtime ?? null,
-        episode_count: it?.totalEpisodes ?? null,
-        episode_runtime: it?.episodeRuntime ?? null,
-        genres: it?.genres ?? [],
-        release_date: bundle?.meta.releaseDate || target.releaseDate || '',
-        overview: bundle?.meta.overview ?? '',
-      });
-      setShowWatchlist(false);
-      onDone?.(`Added ${name} to your watchlist`);
-      onClose();
-    } catch {
-      setShowWatchlist(false);
-      setSaveError("Couldn't save. Please try again.");
-    } finally {
-      setSaving(false);
-    }
-  };
+  const confirmWatchlist = (priority: WatchlistPriority, whyAdded: string) => run('watchlist', async () => {
+    if (!target) return '';
+    const it = bundle?.item;
+    await addToWatchlist({
+      priority,
+      why_added: whyAdded.trim() || undefined,
+      id: target.tmdbId,
+      media_type: target.mediaType,
+      title: target.title,
+      poster_path: target.posterPath,
+      backdrop_path: bundle?.meta.backdropPath ?? null,
+      vote_average: it?.rating ?? 0,
+      vote_count: bundle?.meta.voteCount ?? 0,
+      runtime: it?.runtime ?? null,
+      episode_count: it?.totalEpisodes ?? null,
+      episode_runtime: it?.episodeRuntime ?? null,
+      genres: it?.genres ?? [],
+      release_date: bundle?.meta.releaseDate || target.releaseDate || '',
+      overview: bundle?.meta.overview ?? '',
+    });
+    return `Added ${name} to your watchlist`;
+  });
 
-  const addToUpcoming = () => run(async () => {
+  const addToUpcoming = () => run('upcoming', async () => {
     if (!target) return '';
     await addUpcoming({
       tmdbId: target.tmdbId,
@@ -309,279 +328,294 @@ export default function QuickTrackSheet({ visible, target, onClose, onDone }: Qu
     return `Added ${name} to Upcoming`;
   });
 
+  const resumeTracked = () => run('resume', async () => {
+    if (!target) return '';
+    await resume(target.tmdbId, target.mediaType);
+    return `Resumed ${name}`;
+  });
+
+  const confirmRemove = () => {
+    if (!target) return;
+    Alert.alert('Remove from tracking?', `${name} will no longer be tracked.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove', style: 'destructive',
+        onPress: () => run('remove', async () => {
+          await remove(target.tmdbId, target.mediaType);
+          return `Removed ${name} from tracking`;
+        }),
+      },
+    ]);
+  };
+
+  const onStatusConfirm = (text: string, rating: number | null) => {
+    const mode = statusMode;
+    setStatusMode(null);
+    if (!target || !mode) return;
+    if (mode === 'hold') {
+      run('hold', async () => { await putOnHold(target.tmdbId, target.mediaType, text); return `Put ${name} on hold`; });
+    } else {
+      run('drop', async () => { await dropItem(target.tmdbId, target.mediaType, text, rating); return `Dropped ${name}`; });
+    }
+  };
+  const cancelStatus = useCallback(() => setStatusMode(null), []);
+
   const openDetails = () => {
     if (!target) return;
+    onOpenDetails?.(target);
     onClose();
     router.push({ pathname: '/content/[id]', params: { id: target.tmdbId, media_type: target.mediaType } } as any);
   };
 
-  if (!mounted || !target) return null;
+  const toggleFrom = useCallback(() => setShowFrom(v => !v), []);
+  const backToMain = useCallback(() => setStep('main'), []);
 
-  const releaseDate = bundle?.meta.releaseDate || target.releaseDate || '';
+  // ── Derived display data ────────────────────────────
+  const releaseDate = bundle?.meta.releaseDate || target?.releaseDate || '';
   const isUnreleased = !!releaseDate && releaseDate.slice(0, 10) > localDateKey();
-  const year = releaseDate.slice(0, 4);
-  const poster = tmdbImage(target.posterPath, 'w185');
-  const canWatchlist = !inWatchlist && !tracked;
-  const disabled = saving;
-
-  const trackedProgress = tracked && isTv
+  const rating = bundle?.item.rating ?? 0;
+  const meta = useMemo(() => {
+    const parts = [releaseDate.slice(0, 4), isTv ? 'Series' : 'Movie'].filter(Boolean);
+    if (rating > 0) parts.push(`★ ${rating.toFixed(1)}`);
+    return parts.join(' · ');
+  }, [releaseDate, isTv, rating]);
+  const posterUrl = tmdbImage(target?.posterPath, 'w342');
+  const backdropUrl = tmdbImage(bundle?.meta.backdropPath, 'w780');
+  const progress = tracked && isTv
     ? `S${tracked.currentSeason ?? 1} E${tracked.currentEpisode ?? 1}` +
       (tracked.episodesWatched ? ` · ${tracked.episodesWatched} watched` : '')
     : null;
 
+  if (!mounted || !target) return null;
+
+  const anyBusy = busy !== null;
+  const status = tracked?.status;
+  const isActive = status === 'watching' || status === 'rewatching';
+  const canHold = isActive || status === 'caught_up';
+  const canDrop = !!tracked && status !== 'dropped';
+  const canResume = status === 'on_hold' || status === 'dropped';
+  const rewatchTone = historyCount > 0;
+
   return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <View style={{ flex: 1 }}>
-        <Animated.View style={[StyleSheet.absoluteFill, s.backdrop, { opacity: backdrop }]}>
-          <Pressable style={{ flex: 1 }} onPress={onClose} />
-        </Animated.View>
+    <>
+      {!statusMode ? (
+        <Modal visible transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+          <View style={{ flex: 1 }}>
+            <Animated.View style={[StyleSheet.absoluteFill, s.backdrop, { opacity: backdrop }]}>
+              <Pressable style={{ flex: 1 }} onPress={onClose} accessibilityLabel="Close" />
+            </Animated.View>
 
-        <Animated.View style={[s.sheet, { transform: [{ translateY: slide }] }]}>
-          <View style={s.handleArea} {...pan.panHandlers}>
-            <View style={s.handle} />
-          </View>
+            <KeyboardAvoidingView
+              style={s.kav}
+              pointerEvents="box-none"
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            >
+              <Animated.View
+                style={[s.sheet, { paddingBottom: insets.bottom + 16, transform: [{ translateY: slide }] }]}
+              >
+                <View {...pan.panHandlers}>
+                  <SheetHero
+                    title={target.title}
+                    backdropUrl={backdropUrl}
+                    posterUrl={posterUrl}
+                    meta={meta}
+                    status={tracked?.status}
+                    progress={progress}
+                    historyCount={historyCount}
+                    onClose={onClose}
+                  />
+                </View>
 
-          {/* Header */}
-          <View style={s.header}>
-            {poster ? (
-              <Image source={{ uri: poster }} style={s.poster} />
-            ) : (
-              <View style={[s.poster, s.posterFallback]}>
-                <Ionicons name="film-outline" size={22} color="#52525B" />
-              </View>
-            )}
-            <View style={{ flex: 1, gap: 4 }}>
-              <Text style={s.title} numberOfLines={2}>{target.title}</Text>
-              <Text style={s.meta}>
-                {[year, isTv ? 'TV Series' : 'Movie'].filter(Boolean).join(' · ')}
-              </Text>
-              <View style={s.stateRow}>
-                {tracked ? (
-                  <>
-                    <StatusPill status={tracked.status} />
-                    {trackedProgress ? <Text style={s.stateText}>{trackedProgress}</Text> : null}
-                  </>
-                ) : (
-                  <Text style={s.stateText}>Not tracked</Text>
-                )}
-                {historyCount > 0 ? (
-                  <Text style={s.stateText}>
-                    {tracked ? '· ' : ''}Watched {historyCount}× before
-                  </Text>
-                ) : null}
-              </View>
-            </View>
-          </View>
-
-          <ScrollView
-            style={{ maxHeight: SCREEN_H * 0.55 }}
-            contentContainerStyle={s.body}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-            {loading ? (
-              <Skeleton />
-            ) : loadError ? (
-              <View style={s.errorBox}>
-                <Ionicons name="cloud-offline-outline" size={26} color="#71717A" />
-                <Text style={s.errorText}>Couldn't load this title.</Text>
-                <Pressable style={s.retry} onPress={() => setRetryKey(k => k + 1)}>
-                  <Ionicons name="refresh" size={14} color={ACCENT} />
-                  <Text style={s.retryText}>Retry</Text>
-                </Pressable>
-              </View>
-            ) : bundle ? (
-              <>
-                {!isTv ? (
-                  <>
-                    <ActionButton
-                      primary icon="checkmark-circle" disabled={disabled}
-                      label="Watched it"
-                      sub={historyCount > 0 ? 'Log another watch' : undefined}
-                      onPress={watchedMovie}
+                <ScrollView
+                  contentContainerStyle={s.body}
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  {step === 'watchlist' ? (
+                    <WatchlistStep
+                      saving={busy === 'watchlist'}
+                      onBack={backToMain}
+                      onSave={confirmWatchlist}
                     />
-                    {tracked?.status !== 'watching' && tracked?.status !== 'rewatching' ? (
-                      <ActionButton icon="play-circle-outline" label="Watching now" disabled={disabled} onPress={watchingNow} />
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    {ended ? (
-                      <ActionButton
-                        primary icon="checkmark-done-circle" label="Completed" disabled={disabled}
-                        sub="Watched every episode" onPress={completed}
-                      />
-                    ) : (
-                      <ActionButton
-                        primary icon="checkmark-done" label="Caught up" disabled={disabled}
-                        sub="Watched every aired episode" onPress={caughtUp}
-                      />
-                    )}
-                    <ActionButton
-                      icon="play-skip-forward-outline" label="Watching from…" disabled={disabled}
-                      sub={showFrom ? undefined : 'Pick the last episode you watched'}
-                      onPress={() => setShowFrom(v => !v)}
-                    />
-                    {showFrom ? (
-                      <View style={s.fromBox}>
-                        {seasons.length > 1 ? (
-                          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                            {seasons.map(x => {
-                              const active = x.season === pickSeason;
-                              return (
-                                <Pressable
-                                  key={x.season} onPress={() => chooseSeason(x.season)}
-                                  style={[s.chip, active && s.chipActive]}
-                                >
-                                  <Text style={[s.chipText, active && s.chipTextActive]}>S{x.season}</Text>
-                                </Pressable>
-                              );
-                            })}
-                          </ScrollView>
+                  ) : (
+                    <>
+                      <View style={s.grid}>
+                        <ActionTile
+                          icon="open-outline" label="Open details" sub="See the full page"
+                          disabled={anyBusy} onPress={openDetails}
+                        />
+
+                        {loading ? <SheetSkeleton count={3} /> : null}
+
+                        {bundle && !isTv ? (
+                          <>
+                            <ActionTile
+                              icon="checkmark-circle"
+                              color={rewatchTone ? STATUS_STYLE.rewatching.color : STATUS_STYLE.completed.color}
+                              label="Watched it"
+                              sub={rewatchTone ? 'Log another watch' : 'Mark as completed'}
+                              loading={busy === 'watched'} disabled={anyBusy} onPress={watchedMovie}
+                            />
+                            {!isActive ? (
+                              <ActionTile
+                                icon="play-circle" color={STATUS_STYLE.watching.color}
+                                label="Watching now" sub="Start tracking"
+                                loading={busy === 'watching'} disabled={anyBusy} onPress={watchingNow}
+                              />
+                            ) : null}
+                          </>
                         ) : null}
-                        <Text style={s.fromLabel}>Last episode watched</Text>
-                        <View style={s.stepper}>
-                          <Pressable
-                            style={s.stepBtn} disabled={pickEpisode <= 1}
-                            onPress={() => setPickEpisode(e => Math.max(1, e - 1))}
-                          >
-                            <Ionicons name="remove" size={20} color={pickEpisode <= 1 ? '#3F3F46' : '#fff'} />
-                          </Pressable>
-                          <Text style={s.stepValue}>S{pickSeason} · E{pickEpisode}
-                            {seasonEpCount < 999 ? <Text style={s.stepOf}>{`  / ${seasonEpCount}`}</Text> : null}
-                          </Text>
-                          <Pressable
-                            style={s.stepBtn} disabled={pickEpisode >= seasonEpCount}
-                            onPress={() => setPickEpisode(e => Math.min(seasonEpCount, e + 1))}
-                          >
-                            <Ionicons name="add" size={20} color={pickEpisode >= seasonEpCount ? '#3F3F46' : '#fff'} />
+
+                        {bundle && isTv ? (
+                          <>
+                            <ActionTile
+                              icon="time" color={STATUS_STYLE.caught_up.color}
+                              label="Caught up" sub="Watched all aired"
+                              loading={busy === 'caughtUp'} disabled={anyBusy} onPress={caughtUp}
+                            />
+                            {ended ? (
+                              <ActionTile
+                                icon="checkmark-done-circle" color={STATUS_STYLE.completed.color}
+                                label="Completed" sub="Watched every episode"
+                                loading={busy === 'completed'} disabled={anyBusy} onPress={completed}
+                              />
+                            ) : null}
+                            <ActionTile
+                              icon="play-skip-forward" color={STATUS_STYLE.watching.color}
+                              label="Watching from…" sub="Pick an episode"
+                              selected={showFrom} disabled={anyBusy} onPress={toggleFrom}
+                            />
+                          </>
+                        ) : null}
+
+                        {!loading && !tracked ? (
+                          inWatchlist ? (
+                            <ActionTile icon="bookmark" label="In Watchlist" sub="Already saved" disabled onPress={noop} />
+                          ) : (
+                            <ActionTile
+                              icon="bookmark-outline" label="Add to Watchlist" sub="Watch it later"
+                              disabled={anyBusy} onPress={() => setStep('watchlist')}
+                            />
+                          )
+                        ) : null}
+
+                        {!loading && isUnreleased && !upcomingSaved ? (
+                          <ActionTile
+                            icon="notifications-outline" label="Add to Upcoming"
+                            sub={`Releases ${releaseDate.slice(0, 10)}`}
+                            loading={busy === 'upcoming'} disabled={anyBusy} onPress={addToUpcoming}
+                          />
+                        ) : null}
+                      </View>
+
+                      {loadError ? (
+                        <View style={s.errorBox}>
+                          <Ionicons name="cloud-offline-outline" size={24} color="#71717A" />
+                          <Text style={s.errorText}>Couldn't load this title.</Text>
+                          <Pressable style={s.retry} onPress={() => setRetryKey(k => k + 1)}>
+                            <Ionicons name="refresh" size={14} color={ACCENT} />
+                            <Text style={s.retryText}>Retry</Text>
                           </Pressable>
                         </View>
-                        {seasonEpCount < 999 ? (
-                          <ScrollView style={{ maxHeight: 108 }} nestedScrollEnabled>
-                            <View style={s.grid}>
-                              {Array.from({ length: seasonEpCount }, (_, i) => i + 1).map(n => {
-                                const active = n === pickEpisode;
-                                return (
-                                  <Pressable
-                                    key={n} onPress={() => setPickEpisode(n)}
-                                    style={[s.cell, n < pickEpisode && s.cellDone, active && s.cellActive]}
-                                  >
-                                    <Text style={[s.cellText, active && { color: '#000' }]}>{n}</Text>
-                                  </Pressable>
-                                );
-                              })}
-                            </View>
-                          </ScrollView>
-                        ) : null}
-                        <Pressable style={[s.save, disabled && { opacity: 0.5 }]} disabled={disabled} onPress={watchingFrom}>
-                          <Text style={s.saveText}>Save progress</Text>
-                        </Pressable>
-                      </View>
-                    ) : null}
-                  </>
-                )}
-              </>
-            ) : null}
+                      ) : null}
 
-            {/* Actions that don't need the fetched payload */}
-            {canWatchlist && !loading ? (
-              <ActionButton
-                icon="bookmark-outline" label="Add to Watchlist" disabled={disabled}
-                onPress={() => setShowWatchlist(true)}
-              />
-            ) : null}
-            {isUnreleased && !upcomingSaved ? (
-              <ActionButton
-                icon="notifications-outline" label="Add to Upcoming" disabled={disabled}
-                sub={`Releases ${releaseDate.slice(0, 10)}`} onPress={addToUpcoming}
-              />
-            ) : null}
-            <ActionButton icon="open-outline" label="Open details" disabled={disabled} onPress={openDetails} />
+                      {bundle && isTv ? (
+                        <Expandable open={showFrom}>
+                          <EpisodePicker
+                            seasons={seasons}
+                            season={pickSeason}
+                            episode={pickEpisode}
+                            onSeason={chooseSeason}
+                            onEpisode={setPickEpisode}
+                            onSave={watchingFrom}
+                            saving={busy === 'from'}
+                            disabled={anyBusy}
+                          />
+                        </Expandable>
+                      ) : null}
 
-            {saveError ? <Text style={s.saveError}>{saveError}</Text> : null}
-            {saving ? <ActivityIndicator size="small" color={ACCENT} style={{ marginTop: 4 }} /> : null}
-          </ScrollView>
-        </Animated.View>
-      </View>
+                      {tracked ? (
+                        <View style={s.statusRow}>
+                          {canResume ? (
+                            <PillButton
+                              icon="play" label="Resume" color={STATUS_STYLE.watching.color}
+                              busy={busy === 'resume'} disabled={anyBusy} onPress={resumeTracked}
+                            />
+                          ) : null}
+                          {canHold ? (
+                            <PillButton
+                              icon="pause" label="Put On Hold" color={STATUS_STYLE.on_hold.color}
+                              disabled={anyBusy} onPress={() => setStatusMode('hold')}
+                            />
+                          ) : null}
+                          {canDrop ? (
+                            <PillButton
+                              icon="close-circle-outline" label="Drop" color={STATUS_STYLE.dropped.color}
+                              disabled={anyBusy} onPress={() => setStatusMode('drop')}
+                            />
+                          ) : null}
+                          <PillButton
+                            icon="trash-outline" label="Remove" color={NEUTRAL_PILL}
+                            busy={busy === 'remove'} disabled={anyBusy} onPress={confirmRemove}
+                          />
+                        </View>
+                      ) : null}
+                    </>
+                  )}
 
-      <AddToWatchlistSheet
-        visible={showWatchlist}
+                  {saveError ? (
+                    <View style={s.errRow}>
+                      <Ionicons name="alert-circle" size={15} color="#F87171" />
+                      <Text style={s.saveError}>{saveError}</Text>
+                      <Pressable onPress={retryLast} hitSlop={8} disabled={anyBusy}>
+                        <Text style={s.retryInline}>Retry</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </ScrollView>
+              </Animated.View>
+            </KeyboardAvoidingView>
+          </View>
+        </Modal>
+      ) : null}
+
+      <StatusModal
+        visible={!!statusMode}
+        mode={statusMode ?? 'hold'}
         title={target.title}
-        loading={saving}
-        onConfirm={confirmWatchlist}
-        onCancel={() => setShowWatchlist(false)}
+        onCancel={cancelStatus}
+        onConfirm={onStatusConfirm}
       />
-    </Modal>
+    </>
   );
 }
 
 const s = StyleSheet.create({
   backdrop: { backgroundColor: 'rgba(0,0,0,0.7)' },
+  kav: { flex: 1, justifyContent: 'flex-end' },
   sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: '#121212',
-    borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-    paddingBottom: 28,
+    backgroundColor: SHEET_BG,
+    borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    borderWidth: StyleSheet.hairlineWidth, borderBottomWidth: 0, borderColor: 'rgba(255,255,255,0.08)',
+    maxHeight: MAX_H,
+    overflow: 'hidden',
   },
-  handleArea: { paddingTop: 10, paddingBottom: 14, alignItems: 'center' },
-  handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.18)' },
-  header: { flexDirection: 'row', gap: 14, paddingHorizontal: 20, paddingBottom: 16 },
-  poster: { width: 64, height: 96, borderRadius: 10, backgroundColor: '#1A1A1A' },
-  posterFallback: { alignItems: 'center', justifyContent: 'center' },
-  title: { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
-  meta: { color: '#71717A', fontSize: 13, fontWeight: '500' },
-  stateRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 2 },
-  stateText: { color: '#A1A1AA', fontSize: 12, fontWeight: '600' },
-  body: { paddingHorizontal: 20, gap: 10, paddingBottom: 4 },
-  skeletonRow: { height: 56, borderRadius: 14, backgroundColor: '#1F1F1F' },
-  action: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingVertical: 14, paddingHorizontal: 16, borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  body: { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 4, gap: 12 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  statusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 },
+  pillBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9999, borderWidth: 1,
   },
-  actionPrimary: { backgroundColor: ACCENT, borderColor: ACCENT },
-  actionLabel: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  actionSub: { color: '#71717A', fontSize: 12, fontWeight: '500', marginTop: 1 },
-  fromBox: {
-    gap: 12, padding: 14, borderRadius: 14, backgroundColor: '#1A1A1A',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-  },
-  fromLabel: {
-    color: '#71717A', fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase',
-  },
-  chip: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-  },
-  chipActive: { backgroundColor: 'rgba(16,185,129,0.18)', borderColor: ACCENT },
-  chipText: { color: '#A1A1AA', fontSize: 13, fontWeight: '700' },
-  chipTextActive: { color: ACCENT },
-  stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  stepBtn: {
-    width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-  },
-  stepValue: { color: '#fff', fontSize: 18, fontWeight: '800' },
-  stepOf: { color: '#52525B', fontSize: 14, fontWeight: '600' },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  cell: {
-    minWidth: 36, height: 32, paddingHorizontal: 6, borderRadius: 8,
-    alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.06)',
-  },
-  cellDone: { backgroundColor: 'rgba(16,185,129,0.14)' },
-  cellActive: { backgroundColor: ACCENT },
-  cellText: { color: '#D4D4D8', fontSize: 12, fontWeight: '700' },
-  save: { alignItems: 'center', paddingVertical: 13, borderRadius: 12, backgroundColor: ACCENT },
-  saveText: { color: '#000', fontSize: 14, fontWeight: '700' },
-  errorBox: { alignItems: 'center', gap: 8, paddingVertical: 18 },
+  pillBtnText: { fontSize: 12, fontWeight: '700' },
+  errorBox: { alignItems: 'center', gap: 8, paddingVertical: 10 },
   errorText: { color: '#A1A1AA', fontSize: 14, fontWeight: '600' },
   retry: {
     flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 9,
     borderRadius: 10, borderWidth: 1, borderColor: ACCENT,
   },
   retryText: { color: ACCENT, fontSize: 13, fontWeight: '700' },
-  saveError: { color: '#F87171', fontSize: 13, fontWeight: '600', textAlign: 'center' },
+  errRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  saveError: { color: '#F87171', fontSize: 13, fontWeight: '600' },
+  retryInline: { color: '#F87171', fontSize: 13, fontWeight: '800', textDecorationLine: 'underline' },
 });

@@ -16,8 +16,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useWatchlist } from '../../context/WatchlistContext';
 import { useWatching } from '../../context/WatchingContext';
 import { tmdbGet } from '../../services/tmdb';
-import AddToWatchlistSheet from '../../components/lists/AddToWatchlistSheet';
-import { WatchlistPriority } from '../../services/watchlistStore';
 import YearPickerSheet from '../../components/YearPickerSheet';
 import QuickTrackSheet, { QuickTrackTarget } from '../../components/tracking/QuickTrackSheet';
 import ResultCard from '../../components/search/ResultCard';
@@ -97,7 +95,7 @@ export default function SearchScreen() {
   const loadMoreFailed = useRef(false); // stops auto-paging after a failed page
   const lastParamsKey = useRef('');
 
-  const { isInWatchlist, addItem, removeItem } = useWatchlist();
+  const { isInWatchlist } = useWatchlist();
   const { getItem, getHistoryEntries } = useWatching();
   const { history, recentTitles, addQuery, removeQuery, clearHistory, addTitle } = useSearchHistory();
   const { genres, loading: genresLoading, error: genresError, reload: reloadGenres } = useGenres();
@@ -105,8 +103,6 @@ export default function SearchScreen() {
   genresRef.current = genres;
 
   // Modal state for watchlist confirmation
-  const [modalItem, setModalItem] = useState<MediaItem | null>(null);
-  const [modalLoading, setModalLoading] = useState(false);
 
   const activeCount = countActiveFilters(filters, year);
   const isBrowse = browseMode === 'search' && !query.trim() && activeCount > 0;
@@ -444,25 +440,35 @@ export default function SearchScreen() {
     router.push({ pathname: '/content/[id]', params: { id, media_type: mediaType } } as any);
   }, [router]);
 
-  const onOpenItem = useCallback((item: MediaItem) => {
+  // Long-press: straight to details (records the recent title).
+  const onOpenDetails = useCallback((item: MediaItem) => {
     const mt = mediaTypeOf(item);
     addTitle({ id: item.id, media_type: mt, title: item.title || item.name || 'Untitled', poster_path: item.poster_path });
     openTitle(item.id, mt);
   }, [addTitle, openTitle]);
 
-  const onOpenRecent = useCallback((t: RecentTitle) => {
-    addTitle(t);
-    openTitle(t.id, t.media_type);
-  }, [addTitle, openTitle]);
+  // The sheet reports "Open details" so the title is recorded as recently opened.
+  const onSheetOpenDetails = useCallback((t: QuickTrackTarget) => {
+    addTitle({ id: t.tmdbId, media_type: t.mediaType, title: t.title, poster_path: t.posterPath });
+  }, [addTitle]);
 
   // ── Quick track + snackbar ───────────────────────────
-  const onQuickTrack = useCallback((item: MediaItem) => {
+  const onOpenItem = useCallback((item: MediaItem) => {
     setQuickTarget({
       tmdbId: item.id,
       mediaType: mediaTypeOf(item),
       title: item.title || item.name || 'Untitled',
       posterPath: item.poster_path,
       releaseDate: itemDate(item) || null,
+    });
+  }, []);
+  const onOpenRecent = useCallback((r: RecentTitle) => {
+    setQuickTarget({
+      tmdbId: r.id,
+      mediaType: r.media_type === 'tv' ? 'tv' : 'movie',
+      title: r.title,
+      posterPath: r.poster_path,
+      releaseDate: null,
     });
   }, []);
   const closeQuickTrack = useCallback(() => setQuickTarget(null), []);
@@ -472,62 +478,6 @@ export default function SearchScreen() {
   }, []);
   const hideSnack = useCallback(() => setSnack(null), []);
 
-  // ── Toggle watchlist ────────────────────────────────
-  const handleToggleWatchlist = useCallback((item: MediaItem) => {
-    const mediaType = mediaTypeOf(item);
-    if (isInWatchlist(item.id, mediaType)) {
-      removeItem(item.id, mediaType);
-    } else {
-      setModalItem(item);
-    }
-  }, [isInWatchlist, removeItem]);
-
-  const handleConfirmAdd = useCallback(async (priority: WatchlistPriority, whyAdded: string) => {
-    if (!modalItem) return;
-    const mediaType = mediaTypeOf(modalItem);
-
-    let runtime: number | null = null;
-    let episodeCount: number | null = null;
-    let episodeRuntime: number | null = null;
-    let genreNames: string[] = [];
-
-    // Fetch full details for runtime/episode data
-    setModalLoading(true);
-    try {
-      const json = await tmdbGet<any>(`${mediaType}/${modalItem.id}`);
-      runtime = json.runtime || null;
-      episodeCount = json.number_of_episodes || null;
-      // Try multiple sources for episode runtime
-      episodeRuntime = json.episode_run_time?.[0]
-        || json.last_episode_to_air?.runtime
-        || null;
-      genreNames = (json.genres || []).map((g: any) => g.name);
-    } catch { /* use defaults */ }
-
-    try {
-      await addItem({
-        id: modalItem.id,
-        media_type: mediaType,
-        title: modalItem.title || modalItem.name || '',
-        poster_path: modalItem.poster_path,
-        backdrop_path: null,
-        vote_average: modalItem.vote_average,
-        vote_count: modalItem.vote_count || 0,
-        runtime,
-        episode_count: episodeCount,
-        episode_runtime: episodeRuntime,
-        genres: genreNames,
-        release_date: itemDate(modalItem),
-        overview: modalItem.overview || '',
-        priority,
-        ...(whyAdded ? { why_added: whyAdded } : {}),
-      });
-    } finally {
-      setModalLoading(false);
-    }
-    setModalItem(null);
-  }, [modalItem, addItem]);
-  const cancelWatchlist = useCallback(() => setModalItem(null), []);
 
   // ── List rendering ───────────────────────────────────
   const listExtra = useMemo(
@@ -545,11 +495,10 @@ export default function SearchScreen() {
         watched={getHistoryEntries(item.id, mt).length > 0}
         saved={isInWatchlist(item.id, mt)}
         onOpen={onOpenItem}
-        onQuickTrack={onQuickTrack}
-        onToggleSave={handleToggleWatchlist}
+        onOpenDetails={onOpenDetails}
       />
     );
-  }, [getItem, getHistoryEntries, isInWatchlist, onOpenItem, onQuickTrack, handleToggleWatchlist]);
+  }, [getItem, getHistoryEntries, isInWatchlist, onOpenItem, onOpenDetails]);
 
   const emptyEl = useMemo(() => {
     if (loading) return null;
@@ -760,16 +709,9 @@ export default function SearchScreen() {
         target={quickTarget}
         onClose={closeQuickTrack}
         onDone={onQuickDone}
+        onOpenDetails={onSheetOpenDetails}
       />
 
-      <AddToWatchlistSheet
-        visible={!!modalItem}
-        title={modalItem?.title || modalItem?.name || ''}
-        subtitle={modalItem ? (mediaTypeOf(modalItem) === 'tv' ? 'Series' : 'Movie') : undefined}
-        loading={modalLoading}
-        onConfirm={handleConfirmAdd}
-        onCancel={cancelWatchlist}
-      />
     </View>
   );
 }

@@ -155,3 +155,22 @@ export function getWatchlistStats(items: WatchlistItem[]) {
   const hours = getEstimatedHours(items);
   return { total, movies, series, hours };
 }
+
+export async function updateWatchlistItem(
+  id: number,
+  mediaType: string,
+  updates: { priority?: WatchlistPriority; why_added?: string },
+): Promise<void> {
+  const list = await getWatchlist();
+  const key = makeKey(id, mediaType);
+  const idx = list.findIndex(i => makeKey(i.id, i.media_type) === key);
+  if (idx === -1) return;
+  const next = { ...list[idx] };
+  if (updates.priority !== undefined) next.priority = updates.priority;
+  if (updates.why_added !== undefined) {
+    const note = updates.why_added.trim();
+    if (note) next.why_added = note; else delete next.why_added;
+  }
+  list[idx] = next;
+  await saveWatchlist(list);
+}

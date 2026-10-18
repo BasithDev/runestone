@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { UpcomingItem, titleKey } from '../types';
+import { getMovieReleaseDates, RELEASE_TYPE } from './tmdb';
 
 const UPCOMING_KEY = '@runestone_upcoming';
 
@@ -54,4 +55,25 @@ export async function updateUpcomingItem(
 export async function removeUpcomingItem(mediaType: string, tmdbId: number): Promise<void> {
   const list = await getUpcomingItems();
   await saveUpcomingItems(list.filter(i => !(i.mediaType === mediaType && i.tmdbId === tmdbId)));
+}
+
+// ── India release date resolution ─────────────────────
+/**
+ * Earliest India Theatrical (type 3, else 2, else 1) date as YYYY-MM-DD;
+ * falls back to the movie's primary release date.
+ */
+export async function resolveMovieReleaseDate(
+  movieId: number, fallback: string | null | undefined,
+): Promise<string | null> {
+  try {
+    const releases = await getMovieReleaseDates(movieId);
+    for (const type of [RELEASE_TYPE.THEATRICAL, RELEASE_TYPE.THEATRICAL_LIMITED, RELEASE_TYPE.PREMIERE]) {
+      const dates = releases
+        .filter(r => r.type === type && r.release_date)
+        .map(r => r.release_date.slice(0, 10))
+        .sort();
+      if (dates.length) return dates[0];
+    }
+  } catch { /* fall through to fallback */ }
+  return fallback ? fallback.slice(0, 10) : null;
 }

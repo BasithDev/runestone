@@ -7,6 +7,8 @@ import { useWatching } from '../context/WatchingContext';
 import { useWatchlist } from '../context/WatchlistContext';
 import { useUpcoming } from '../context/UpcomingContext';
 import { BackupCounts, BackupFile, countsOf, exportBackup, pickBackup, restoreBackup } from '../services/backup';
+import { ensureNotificationPermission, scheduleNotificationAt, syncReleaseReminders } from '../services/notifications';
+import { refreshAll } from '../services/ottTracker';
 
 function CountsRow({ counts }: { counts: BackupCounts }) {
   const cells = [
@@ -34,7 +36,7 @@ export default function BackupScreen() {
   const watchlist = useWatchlist();
   const upcoming = useUpcoming();
 
-  const [busy, setBusy] = useState<'export' | 'pick' | 'restore' | null>(null);
+  const [busy, setBusy] = useState<'export' | 'pick' | 'restore' | 'test' | 'ott' | null>(null);
   const [pending, setPending] = useState<BackupFile | null>(null);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
@@ -76,6 +78,34 @@ export default function BackupScreen() {
       setMessage({ kind: 'ok', text: 'Backup restored. Alerts and reminders are being rebuilt.' });
     } catch (e: any) {
       setMessage({ kind: 'error', text: e?.message || 'Restore failed.' });
+    } finally { setBusy(null); }
+  };
+
+  // ── Developer tools (development builds only) ───────
+  const handleTestNotification = async () => {
+    setBusy('test'); setMessage(null);
+    try {
+      if (!(await ensureNotificationPermission())) {
+        setMessage({ kind: 'error', text: 'Notification permission is off. Enable it in Android settings for Runestone.' });
+        return;
+      }
+      const id = await scheduleNotificationAt(
+        new Date(Date.now() + 5000), 'Runestone test', 'Notifications are working.', { screen: 'alerts' },
+      );
+      setMessage(id
+        ? { kind: 'ok', text: 'Test notification scheduled — it arrives in 5 seconds (try locking the phone).' }
+        : { kind: 'error', text: 'Could not schedule a notification on this build.' });
+    } finally { setBusy(null); }
+  };
+
+  const handleOttCheck = async () => {
+    setBusy('ott'); setMessage(null);
+    try {
+      await syncReleaseReminders();
+      await refreshAll({ force: true });
+      setMessage({ kind: 'ok', text: 'OTT check finished and reminders re-synced. See the Alerts screen.' });
+    } catch (e: any) {
+      setMessage({ kind: 'error', text: e?.message || 'OTT check failed.' });
     } finally { setBusy(null); }
   };
 
@@ -162,6 +192,22 @@ export default function BackupScreen() {
             </View>
           )}
         </View>
+
+        {__DEV__ && (
+          <View style={st.card}>
+            <View style={st.cardHeadRow}>
+              <Ionicons name="construct-outline" size={18} color="#A1A1AA" />
+              <Text style={st.cardTitle}>Developer tools</Text>
+            </View>
+            <Text style={st.cardText}>Only visible in development builds.</Text>
+            <Pressable style={[st.cancelBtn, busy && st.btnDisabled]} onPress={handleTestNotification} disabled={!!busy}>
+              {busy === 'test' ? <ActivityIndicator color="#A1A1AA" /> : <Text style={st.cancelBtnText}>Send test notification (5s)</Text>}
+            </Pressable>
+            <Pressable style={[st.cancelBtn, busy && st.btnDisabled]} onPress={handleOttCheck} disabled={!!busy}>
+              {busy === 'ott' ? <ActivityIndicator color="#A1A1AA" /> : <Text style={st.cancelBtnText}>Run OTT check + reminder sync now</Text>}
+            </Pressable>
+          </View>
+        )}
 
         {message && (
           <View style={[st.message, message.kind === 'error' ? st.messageError : st.messageOk]}>

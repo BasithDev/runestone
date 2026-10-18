@@ -81,7 +81,7 @@ export default function StatsScreen() {
   const router = useRouter();
   const {
     lifetimeStats, currentStreak, longestStreak,
-    availableYears, history,
+    availableYears, watchLog,
     getPeriodStats, getGenreStats, directorStats,
   } = useWatching();
 
@@ -121,7 +121,8 @@ export default function StatsScreen() {
     ? MONTH_NAMES.slice(0, currentMonth)
     : MONTH_NAMES;
 
-  const isEmpty = history.length === 0;
+  // Empty only when nothing at all has been watched (any status counts).
+  const isEmpty = totalContent === 0 && watchLog.length === 0;
 
   return (
     <ScrollView
@@ -152,7 +153,7 @@ export default function StatsScreen() {
             </View>
             <Text style={s.emptyTitle}>No watch history yet</Text>
             <Text style={s.emptySubtext}>
-              Start watching content and mark items as completed to see your stats here.
+              Start watching something and log episodes — everything you watch shows up here.
             </Text>
           </View>
         ) : (

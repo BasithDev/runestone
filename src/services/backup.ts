@@ -21,6 +21,7 @@ const DATA_KEYS = {
   history: '@runestone_watch_history',
   watchlist: '@runestone_watchlist',
   upcoming: '@runestone_upcoming',
+  watchLog: '@runestone_watch_log',
 } as const;
 type DataName = keyof typeof DATA_KEYS;
 
@@ -40,6 +41,8 @@ export interface BackupCounts {
   watchlist: number;
   upcoming: number;
 }
+
+// Older backups have no watch log; it's rebuilt from history on restore.
 
 async function readArray(key: string): Promise<unknown[]> {
   try {
@@ -140,6 +143,12 @@ export async function restoreBackup(backup: BackupFile): Promise<BackupCounts> {
     [DATA_KEYS.watchlist, JSON.stringify(watchlist)],
     [DATA_KEYS.upcoming, JSON.stringify(backup.data.upcoming)],
   ]);
+  // No log in the file (older backup) → remove it so it rebuilds from the restored data.
+  if (backup.data.watchLog.length > 0) {
+    await AsyncStorage.setItem(DATA_KEYS.watchLog, JSON.stringify(backup.data.watchLog));
+  } else {
+    await AsyncStorage.removeItem(DATA_KEYS.watchLog);
+  }
   await AsyncStorage.multiRemove(DEVICE_KEYS);
 
   if (Platform.OS !== 'web') {

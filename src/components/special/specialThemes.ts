@@ -21,8 +21,6 @@ export interface SpecialTheme {
   /** Display font family (loaded via expo-font). */
   displayFont: string;
   tagline: string;
-  /** Slowly rotating decoration in the hero. */
-  heroIcon: McIcon;
   /** Icon in front of section headers. */
   sectionIcon: McIcon;
   /** Rating card style. */
@@ -38,7 +36,6 @@ const ONE_PIECE: SpecialTheme = {
   muted: '#8FA3C7',
   displayFont: 'PirataOne_400Regular',
   tagline: 'The Grand Line awaits',
-  heroIcon: 'ship-wheel',
   sectionIcon: 'anchor',
   ratingCard: 'bounty',
 };

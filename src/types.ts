@@ -98,6 +98,20 @@ export interface WatchHistoryEntry {
   isRewatch?: boolean;   // true when this entry logs a rewatch
 }
 
+// ── Watch Log (persisted) ──────────────────────────────
+// One entry per progress change, so stats can count everything watched
+// (not only completed titles) and know *when* it was watched.
+export interface WatchLogEntry {
+  id: string;
+  tmdbId: number;
+  mediaType: 'movie' | 'tv';
+  contentType: ContentType;
+  title: string;
+  at: string;        // ISO — when it was watched
+  episodes: number;  // episodes watched (movies: 1); negative = correction (unmarked)
+  minutes: number;   // watch time in minutes; negative = correction
+}
+
 // ── Computed Stats ─────────────────────────────────────
 export interface ComputedStats {
   lifetime: {

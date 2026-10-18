@@ -20,7 +20,6 @@ import * as Font from 'expo-font';
 import { PirataOne_400Regular } from '@expo-google-fonts/pirata-one';
 import { getSpecialTheme, SpecialThemeContext, useSpecialTheme } from '../../components/special/specialThemes';
 import BountyPoster from '../../components/special/BountyPoster';
-import SpinningEmblem from '../../components/special/SpinningEmblem';
 
 const IMG_W500 = 'https://image.tmdb.org/t/p/w500';
 const IMG_W780 = 'https://image.tmdb.org/t/p/w780';
@@ -493,15 +492,6 @@ export default function ContentDetailsScreen() {
 
           {/* ── RATING + WATCHLIST ──────────────────────── */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            {/* Themed emblem sits on the plain page background, beside the rating card */}
-            {theme && (
-              <SpinningEmblem
-                icon={theme.heroIcon}
-                color={theme.accent + '33'}
-                size={120}
-                style={{ right: 70, top: '50%', marginTop: -60 }}
-              />
-            )}
             {theme?.ratingCard === 'bounty' && rating > 0 ? (
               <BountyPoster
                 theme={theme}

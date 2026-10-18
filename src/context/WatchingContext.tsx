@@ -1,12 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  WatchingItem, WatchHistoryEntry,
+  WatchingItem, WatchHistoryEntry, WatchLogEntry,
   ComputedStats, PeriodStats, GenreStats,
 } from '../types';
 import {
   getWatchingItems, addWatchingItem, patchWatchingItem,
   updateWatchingStatus, removeWatchingItem,
-  getWatchHistory, markAsCompleted,
+  getWatchHistory, getWatchLog, markAsCompleted,
   putOnHold, dropWatchingItem, resumeWatchingItem, advanceWatchingItem,
   computeLifetimeStats, computePeriodStats, computeGenreStats, computeDirectorStats,
   computeStreak, getAvailableYears,
@@ -20,6 +20,7 @@ interface WatchingContextType {
   onHoldItems: WatchingItem[];
   droppedItems: WatchingItem[];
   history: WatchHistoryEntry[];
+  watchLog: WatchLogEntry[];
   loading: boolean;
 
   // Computed
@@ -54,13 +55,15 @@ const WatchingContext = createContext<WatchingContextType | null>(null);
 export function WatchingProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<WatchingItem[]>([]);
   const [history, setHistory] = useState<WatchHistoryEntry[]>([]);
+  const [watchLog, setWatchLog] = useState<WatchLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Load data on mount
   const loadData = useCallback(async () => {
-    const [w, h] = await Promise.all([getWatchingItems(), getWatchHistory()]);
+    const [w, h, l] = await Promise.all([getWatchingItems(), getWatchHistory(), getWatchLog()]);
     setItems(w);
     setHistory(h);
+    setWatchLog(l);
     setLoading(false);
   }, []);
 
@@ -74,10 +77,11 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
   const droppedItems = useMemo(() => items.filter(i => i.status === 'dropped'), [items]);
 
   // Computed stats
-  const lifetimeStats = useMemo(() => computeLifetimeStats(history), [history]);
-  const streak = useMemo(() => computeStreak(history), [history]);
-  const availableYears = useMemo(() => getAvailableYears(history), [history]);
-  const directorStats = useMemo(() => computeDirectorStats(history), [history]);
+  // Everything watched counts (not only completed): history + items with progress + watch log.
+  const lifetimeStats = useMemo(() => computeLifetimeStats(history, items, watchLog), [history, items, watchLog]);
+  const streak = useMemo(() => computeStreak(watchLog), [watchLog]);
+  const availableYears = useMemo(() => getAvailableYears(watchLog), [watchLog]);
+  const directorStats = useMemo(() => computeDirectorStats(history, items), [history, items]);
 
   // Actions
   const startWatching = useCallback(async (item: Omit<WatchingItem, 'startedAt' | 'lastWatched'>) => {
@@ -141,12 +145,12 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
 
   // Period stats (not memoized since year/month params change)
   const getPeriodStats = useCallback((year: number, month?: number | null) => {
-    return computePeriodStats(history, year, month);
-  }, [history]);
+    return computePeriodStats(watchLog, year, month);
+  }, [watchLog]);
 
   const getGenreStats = useCallback(() => {
-    return computeGenreStats(history);
-  }, [history]);
+    return computeGenreStats(history, items);
+  }, [history, items]);
 
   const ctx = useMemo<WatchingContextType>(() => ({
     watchingItems,
@@ -154,6 +158,7 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
     onHoldItems,
     droppedItems,
     history,
+    watchLog,
     loading,
     lifetimeStats,
     currentStreak: streak.current,
@@ -176,7 +181,7 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
     getPeriodStats,
     getGenreStats,
   }), [
-    watchingItems, awaitingItems, onHoldItems, droppedItems, history, loading, lifetimeStats, streak,
+    watchingItems, awaitingItems, onHoldItems, droppedItems, history, watchLog, loading, lifetimeStats, streak,
     availableYears, directorStats,
     startWatching, updateProgressCb, markCompletedCb, markCaughtUpCb, putOnHoldCb, dropCb, resumeCb,
     advanceCb, removeCb, isItemWatching, getItemCb, getHistoryEntries, loadData, getPeriodStats, getGenreStats,

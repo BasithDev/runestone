@@ -1,12 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-  WatchingItem, WatchHistoryEntry, WatchingStatus,
+  WatchingItem, WatchHistoryEntry, WatchingStatus, WatchLogEntry, ContentType,
   ComputedStats, PeriodStats, GenreStats, SeasonBreakdown,
   GENRE_COLORS,
 } from '../types';
 
 const WATCHING_KEY = '@runestone_watching';
 const HISTORY_KEY = '@runestone_watch_history';
+export const WATCH_LOG_KEY = '@runestone_watch_log';
+
+const DEFAULT_EPISODE_MINUTES = 45;
+const DEFAULT_MOVIE_MINUTES = 120;
 
 /** Fields that may be patched on an existing watching item. */
 export type WatchingPatch = Partial<Omit<WatchingItem, 'id' | 'tmdbId' | 'mediaType' | 'startedAt'>>;
@@ -49,6 +53,77 @@ async function readHistory(): Promise<WatchHistoryEntry[]> {
 
 async function writeHistory(entries: WatchHistoryEntry[]) {
   await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(entries));
+}
+
+// ── Watch log (low-level) ─────────────────────────────
+
+const episodeMinutes = (i: { episodeRuntime?: number | null }) => i.episodeRuntime || DEFAULT_EPISODE_MINUTES;
+const movieMinutes = (i: { runtime?: number | null }) => i.runtime || DEFAULT_MOVIE_MINUTES;
+
+function logEntry(
+  item: { tmdbId: number; mediaType: 'movie' | 'tv'; contentType: ContentType; title: string },
+  episodes: number, minutes: number, at = new Date().toISOString(),
+): WatchLogEntry {
+  return {
+    id: `${item.mediaType}-${item.tmdbId}-${Date.parse(at)}-${Math.random().toString(36).slice(2, 7)}`,
+    tmdbId: item.tmdbId, mediaType: item.mediaType, contentType: item.contentType, title: item.title,
+    at, episodes, minutes: Math.round(minutes),
+  };
+}
+
+/**
+ * Builds the first log from data saved before the log existed:
+ * every completion in history, plus progress on items still being watched.
+ */
+function backfillLog(items: WatchingItem[], history: WatchHistoryEntry[]): WatchLogEntry[] {
+  const log: WatchLogEntry[] = [];
+  for (const h of history) {
+    if (h.mediaType === 'movie') {
+      log.push(logEntry(h, 1, movieMinutes(h), h.completedAt));
+    } else {
+      const eps = h.totalEpisodes || 0;
+      if (eps > 0) log.push(logEntry(h, eps, eps * episodeMinutes(h), h.completedAt));
+    }
+  }
+  for (const i of items) {
+    const at = i.lastWatched || i.startedAt;
+    if (i.mediaType === 'movie') {
+      if (i.movieCompleted) log.push(logEntry(i, 1, movieMinutes(i), at));
+    } else if ((i.episodesWatched ?? 0) > 0) {
+      log.push(logEntry(i, i.episodesWatched!, i.episodesWatched! * episodeMinutes(i), at));
+    }
+  }
+  return log;
+}
+
+async function readLog(): Promise<WatchLogEntry[]> {
+  try {
+    const raw = await AsyncStorage.getItem(WATCH_LOG_KEY);
+    if (raw != null) return JSON.parse(raw);
+  } catch { /* fall through to rebuild */ }
+  const log = backfillLog(await readItems(), await readHistory());
+  await AsyncStorage.setItem(WATCH_LOG_KEY, JSON.stringify(log));
+  return log;
+}
+
+async function appendLog(entries: WatchLogEntry[]) {
+  if (entries.length === 0) return;
+  const log = await readLog();
+  log.push(...entries);
+  await AsyncStorage.setItem(WATCH_LOG_KEY, JSON.stringify(log));
+}
+
+/** Log entries for the change from `before` to `after` (episodes / movie completion). */
+function progressLog(before: WatchingItem, after: WatchingItem): WatchLogEntry[] {
+  if (after.mediaType === 'movie') {
+    const was = !!before.movieCompleted, now = !!after.movieCompleted;
+    if (was === now) return [];
+    const sign = now ? 1 : -1;
+    return [logEntry(after, sign, sign * movieMinutes(after))];
+  }
+  const delta = (after.episodesWatched ?? 0) - (before.episodesWatched ?? 0);
+  if (delta === 0) return [];
+  return [logEntry(after, delta, delta * episodeMinutes(after))];
 }
 
 const same = (i: { tmdbId: number; mediaType: string }, tmdbId: number, mediaType: string) =>
@@ -204,6 +279,7 @@ export function addWatchingItem(item: Omit<WatchingItem, 'startedAt' | 'lastWatc
     };
     list.push(entry);
     await writeItems(list);
+    await appendLog(progressLog({ ...entry, episodesWatched: 0, movieCompleted: false }, entry));
     return entry;
   });
 }
@@ -213,8 +289,10 @@ export function patchWatchingItem(tmdbId: number, mediaType: string, patch: Watc
     const list = await readItems();
     const idx = list.findIndex(i => same(i, tmdbId, mediaType));
     if (idx === -1) return;
-    list[idx] = { ...list[idx], ...patch, lastWatched: new Date().toISOString() };
+    const before = list[idx];
+    list[idx] = { ...before, ...patch, lastWatched: new Date().toISOString() };
     await writeItems(list);
+    await appendLog(progressLog(before, list[idx]));
   });
 }
 
@@ -276,8 +354,10 @@ export function advanceWatchingItem(tmdbId: number, mediaType: string): Promise<
     if (idx === -1) return false;
     const patch = advanceEpisode(list[idx]);
     if (!patch) return false;
-    list[idx] = { ...list[idx], ...patch, lastWatched: new Date().toISOString() };
+    const before = list[idx];
+    list[idx] = { ...before, ...patch, lastWatched: new Date().toISOString() };
     await writeItems(list);
+    await appendLog(progressLog(before, list[idx]));
     return true;
   });
 }
@@ -347,29 +427,47 @@ export function markAsCompleted(tmdbId: number, mediaType: string): Promise<void
     history.push(buildHistoryEntry(item, prior));
     await writeHistory(history);
     await writeItems(list.filter(i => !same(i, tmdbId, mediaType)));
+
+    // Completing counts whatever wasn't logged yet as watched.
+    const finished: WatchingItem = item.mediaType === 'movie'
+      ? { ...item, movieCompleted: true }
+      : { ...item, episodesWatched: Math.max(item.episodesWatched ?? 0, getTotalEpisodes(item)) };
+    await appendLog(progressLog(item, finished));
   });
 }
 
-// ── Computed Stats ────────────────────────────────────
+// ── Watch log access ──────────────────────────────────
 
-function estimateHours(entry: WatchHistoryEntry | WatchingItem): number {
-  if (entry.mediaType === 'movie') {
-    return (entry.runtime || 120) / 60; // default 2h for movies
-  }
-  const eps = ('totalEpisodes' in entry ? entry.totalEpisodes : 0) || 0;
-  const epRuntime = ('episodeRuntime' in entry ? entry.episodeRuntime : null) || 45;
-  return (eps * epRuntime) / 60;
+/** The full watch log (built from existing data the first time). */
+export function getWatchLog(): Promise<WatchLogEntry[]> {
+  return serialize(readLog);
 }
+
+// ── Computed Stats ────────────────────────────────────
+// Stats cover everything watched, not only completed titles:
+// history (completed) + items with progress (watching, caught up, on hold,
+// dropped, rewatching). Time-based stats come from the watch log.
 
 const titleId = (h: { mediaType: string; tmdbId: number }) => `${h.mediaType}-${h.tmdbId}`;
 
-/** One entry per title (the most recent one). */
-function uniqueTitles(history: WatchHistoryEntry[]): WatchHistoryEntry[] {
-  const map = new Map<string, WatchHistoryEntry>();
-  for (const h of history) {
-    const prev = map.get(titleId(h));
-    if (!prev || h.completedAt >= prev.completedAt) map.set(titleId(h), h);
-  }
+interface WatchedTitle {
+  tmdbId: number;
+  mediaType: 'movie' | 'tv';
+  contentType: ContentType;
+  title: string;
+  genres: string[];
+  directors?: string[];
+}
+
+function hasProgress(i: WatchingItem): boolean {
+  return i.mediaType === 'movie' ? !!i.movieCompleted : (i.episodesWatched ?? 0) > 0;
+}
+
+/** Every title the user has watched at least part of, once each. */
+export function watchedTitles(history: WatchHistoryEntry[], items: WatchingItem[]): WatchedTitle[] {
+  const map = new Map<string, WatchedTitle>();
+  for (const h of history) map.set(titleId(h), h);
+  for (const i of items) if (hasProgress(i)) map.set(titleId(i), i);
   return Array.from(map.values());
 }
 
@@ -382,43 +480,42 @@ function bump(stats: { movies: number; series: number; anime: number; other: num
   }
 }
 
-/** Counts are unique titles; hours include every entry (rewatches count). */
-export function computeLifetimeStats(history: WatchHistoryEntry[]): ComputedStats['lifetime'] {
+const toHours = (minutes: number) => Math.max(0, Math.round(minutes / 60));
+
+/** Counts are unique watched titles; hours are all logged watch time (rewatches count). */
+export function computeLifetimeStats(
+  history: WatchHistoryEntry[], items: WatchingItem[], log: WatchLogEntry[],
+): ComputedStats['lifetime'] {
   const stats = { movies: 0, series: 0, anime: 0, other: 0, totalHours: 0 };
-  for (const entry of uniqueTitles(history)) bump(stats, entry.contentType);
-  for (const entry of history) stats.totalHours += estimateHours(entry);
-  stats.totalHours = Math.round(stats.totalHours);
+  for (const t of watchedTitles(history, items)) bump(stats, t.contentType);
+  stats.totalHours = toHours(log.reduce((a, e) => a + e.minutes, 0));
   return stats;
 }
 
-/** Period stats count every entry in the period, rewatches included. */
-export function computePeriodStats(
-  history: WatchHistoryEntry[],
-  year: number,
-  month?: number | null,
-): PeriodStats {
-  const filtered = history.filter(entry => {
-    const d = new Date(entry.completedAt);
-    if (d.getFullYear() !== year) return false;
-    if (month != null && d.getMonth() + 1 !== month) return false;
-    return true;
-  });
+function inPeriod(iso: string, year: number, month?: number | null): boolean {
+  const d = new Date(iso);
+  if (d.getFullYear() !== year) return false;
+  return month == null || d.getMonth() + 1 === month;
+}
 
+/** Titles watched (any episodes) and hours watched in the period. */
+export function computePeriodStats(log: WatchLogEntry[], year: number, month?: number | null): PeriodStats {
+  const entries = log.filter(e => inPeriod(e.at, year, month));
   const stats: PeriodStats = { movies: 0, series: 0, anime: 0, other: 0, hours: 0 };
-  for (const entry of filtered) {
-    bump(stats, entry.contentType);
-    stats.hours += estimateHours(entry);
+  const seen = new Set<string>();
+  for (const e of entries) {
+    if (e.episodes <= 0 || seen.has(titleId(e))) continue;
+    seen.add(titleId(e));
+    bump(stats, e.contentType);
   }
-  stats.hours = Math.round(stats.hours);
+  stats.hours = toHours(entries.reduce((a, e) => a + e.minutes, 0));
   return stats;
 }
 
-export function computeGenreStats(history: WatchHistoryEntry[]): GenreStats[] {
+export function computeGenreStats(history: WatchHistoryEntry[], items: WatchingItem[]): GenreStats[] {
   const counts: Record<string, number> = {};
-  for (const entry of uniqueTitles(history)) {
-    for (const genre of entry.genres) {
-      counts[genre] = (counts[genre] || 0) + 1;
-    }
+  for (const t of watchedTitles(history, items)) {
+    for (const genre of t.genres) counts[genre] = (counts[genre] || 0) + 1;
   }
 
   const total = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
@@ -434,14 +531,16 @@ export function computeGenreStats(history: WatchHistoryEntry[]): GenreStats[] {
   }));
 }
 
-/** Top directors/creators by unique completed titles. */
-export function computeDirectorStats(history: WatchHistoryEntry[], limit = 10): DirectorStat[] {
+/** Top directors/creators by unique watched titles. */
+export function computeDirectorStats(
+  history: WatchHistoryEntry[], items: WatchingItem[], limit = 10,
+): DirectorStat[] {
   const map = new Map<string, DirectorStat>();
-  for (const entry of uniqueTitles(history)) {
-    for (const name of new Set(entry.directors ?? [])) {
+  for (const t of watchedTitles(history, items)) {
+    for (const name of new Set(t.directors ?? [])) {
       const stat = map.get(name) ?? { name, count: 0, titles: [] };
       stat.count++;
-      stat.titles.push(entry.title);
+      stat.titles.push(t.title);
       map.set(name, stat);
     }
   }
@@ -450,13 +549,10 @@ export function computeDirectorStats(history: WatchHistoryEntry[], limit = 10): 
     .slice(0, limit);
 }
 
-export function computeStreak(history: WatchHistoryEntry[]): { current: number; longest: number } {
-  if (history.length === 0) return { current: 0, longest: 0 };
-
-  // Unique local calendar dates, newest first
-  const dates = [...new Set(history.map(h => localDateKey(h.completedAt)))]
+/** Streaks are consecutive local days with anything watched. */
+export function computeStreak(log: WatchLogEntry[]): { current: number; longest: number } {
+  const dates = [...new Set(log.filter(e => e.episodes > 0).map(e => localDateKey(e.at)))]
     .sort((a, b) => b.localeCompare(a));
-
   if (dates.length === 0) return { current: 0, longest: 0 };
 
   let current = 0;
@@ -486,22 +582,8 @@ export function computeStreak(history: WatchHistoryEntry[]): { current: number; 
   return { current, longest: Math.max(longest, current) };
 }
 
-export function getAvailableYears(history: WatchHistoryEntry[]): number[] {
-  const years = new Set(history.map(h => new Date(h.completedAt).getFullYear()));
+export function getAvailableYears(log: WatchLogEntry[]): number[] {
+  const years = new Set(log.map(e => new Date(e.at).getFullYear()));
   years.add(new Date().getFullYear());
   return Array.from(years).sort((a, b) => b - a);
-}
-
-export function getAvailableMonths(history: WatchHistoryEntry[], year: number): number[] {
-  const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().getMonth() + 1;
-
-  const months = new Set(
-    history
-      .filter(h => new Date(h.completedAt).getFullYear() === year)
-      .map(h => new Date(h.completedAt).getMonth() + 1)
-  );
-
-  const maxMonth = year === currentYear ? currentMonth : 12;
-  return Array.from(months).filter(m => m <= maxMonth).sort((a, b) => a - b);
 }

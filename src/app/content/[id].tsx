@@ -15,6 +15,12 @@ import { tmdbGet, REGION } from '../../services/tmdb';
 import { WatchlistPriority } from '../../services/watchlistStore';
 import { AddToWatchlistSheet, UpcomingToggleButton } from '../../components/lists';
 import OttInfoCard from '../../components/alerts/OttInfoCard';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Font from 'expo-font';
+import { PirataOne_400Regular } from '@expo-google-fonts/pirata-one';
+import { getSpecialTheme, SpecialThemeContext, useSpecialTheme } from '../../components/special/specialThemes';
+import BountyPoster from '../../components/special/BountyPoster';
+import SpinningEmblem from '../../components/special/SpinningEmblem';
 
 const IMG_W500 = 'https://image.tmdb.org/t/p/w500';
 const IMG_W780 = 'https://image.tmdb.org/t/p/w780';
@@ -71,15 +77,30 @@ interface SeasonInfo { season_number: number; name: string; episode_count: numbe
 // ── Sub-components ─────────────────────────────────────
 
 function SectionHeader({ title }: { title: string }) {
+  const theme = useSpecialTheme();
+  if (!theme) return <Text style={s.sectionHeader}>{title}</Text>;
+  const fontReady = Font.isLoaded(theme.displayFont);
   return (
-    <Text style={s.sectionHeader}>{title}</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+      <MaterialCommunityIcons name={theme.sectionIcon} size={16} color={theme.secondary} />
+      <Text
+        style={[
+          s.sectionHeader,
+          { marginBottom: 0, color: theme.accent },
+          fontReady && { fontFamily: theme.displayFont, fontWeight: 'normal', fontSize: 21, letterSpacing: 0.5 },
+        ]}
+      >
+        {title}
+      </Text>
+    </View>
   );
 }
 
 function GenreChip({ label }: { label: string }) {
+  const theme = useSpecialTheme();
   return (
-    <View style={s.genreChip}>
-      <Text style={s.genreChipText}>{label}</Text>
+    <View style={[s.genreChip, theme && { backgroundColor: theme.secondary + '22', borderColor: theme.secondary + '66' }]}>
+      <Text style={[s.genreChipText, theme && { color: '#F5E6C8' }]}>{label}</Text>
     </View>
   );
 }
@@ -160,6 +181,12 @@ export default function ContentDetailsScreen() {
   const insets = useSafeAreaInsets();
   const type = (media_type === 'tv' ? 'tv' : 'movie') as 'movie' | 'tv';
   const isFromWatchlist = from === 'watchlist';
+
+  // Hand-picked titles get a premium themed page (see components/special).
+  const theme = getSpecialTheme(type, Number(id));
+  const [fontLoaded] = Font.useFonts(theme ? { PirataOne_400Regular } : {});
+  const fontReady = !!theme && fontLoaded;
+  const pageBg = theme?.background ?? '#000';
 
   const [details, setDetails] = useState<Details | null>(null);
   const [collection, setCollection] = useState<Collection | null>(null);
@@ -313,8 +340,8 @@ export default function ContentDetailsScreen() {
   // ── Loading ───────────────────────────────────────
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#10B981" />
+      <View style={{ flex: 1, backgroundColor: pageBg, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={theme?.accent ?? '#10B981'} />
       </View>
     );
   }
@@ -383,7 +410,8 @@ export default function ContentDetailsScreen() {
   const statusHint = trackedItem ? 'View progress' : historyCount > 0 ? 'Tap to rewatch' : 'Tap to start';
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#000' }}>
+    <SpecialThemeContext.Provider value={theme}>
+    <View style={{ flex: 1, backgroundColor: pageBg }}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
 
         {/* ── HERO ───────────────────────────────────────── */}
@@ -394,10 +422,18 @@ export default function ContentDetailsScreen() {
             <Image source={{ uri: `${IMG_W780}${details.poster_path}` }} style={StyleSheet.absoluteFill} resizeMode="cover" />
           ) : null}
           <LinearGradient
-            colors={['rgba(0,0,0,0.1)', 'rgba(0,0,0,0.5)', '#000']}
-            locations={[0, 0.55, 1]}
+            colors={theme ? theme.heroGradient : ['rgba(0,0,0,0.1)', 'rgba(0,0,0,0.5)', '#000']}
+            locations={theme ? undefined : [0, 0.55, 1]}
             style={StyleSheet.absoluteFill}
           />
+          {theme && (
+            <SpinningEmblem
+              icon={theme.heroIcon}
+              color={theme.accent + '2E'}
+              size={170}
+              style={{ top: insets.top + 30, right: -40 }}
+            />
+          )}
 
           {/* Back button */}
           <Pressable
@@ -412,16 +448,49 @@ export default function ContentDetailsScreen() {
             {details.poster_path && (
               <Image
                 source={{ uri: `${IMG_W500}${details.poster_path}` }}
-                style={s.heroPoster}
+                style={[
+                  s.heroPoster,
+                  theme && { borderWidth: 2, borderColor: theme.accent },
+                ]}
                 resizeMode="cover"
               />
             )}
             <View style={s.heroMeta}>
-              <Text style={s.heroTitle} numberOfLines={3}>{title}</Text>
+              <Text
+                style={[
+                  s.heroTitle,
+                  theme && {
+                    color: theme.accent,
+                    textShadowColor: theme.secondary,
+                    textShadowOffset: { width: 2, height: 2 },
+                    textShadowRadius: 0,
+                  },
+                  fontReady && { fontFamily: theme!.displayFont, fontWeight: 'normal', fontSize: 38, lineHeight: 42, letterSpacing: 1 },
+                ]}
+                numberOfLines={3}
+              >
+                {title}
+              </Text>
+              {theme && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                  <MaterialCommunityIcons name="compass-rose" size={13} color={theme.secondary} />
+                  <Text style={{ color: '#F5E6C8', fontSize: 11, fontWeight: '800', letterSpacing: 2, textTransform: 'uppercase' }}>
+                    {theme.tagline}
+                  </Text>
+                </View>
+              )}
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-                {year ? <Text style={s.heroBadge}>{year}</Text> : null}
-                {runtime ? <Text style={s.heroBadge}>{runtime}</Text> : null}
-                <Text style={s.heroBadge}>{type === 'tv' ? 'Series' : 'Movie'}</Text>
+                {[year, runtime, type === 'tv' ? 'Series' : 'Movie'].filter(Boolean).map(label => (
+                  <Text
+                    key={label as string}
+                    style={[
+                      s.heroBadge,
+                      theme && { color: theme.accent, backgroundColor: 'rgba(6,20,46,0.6)', borderWidth: 1, borderColor: theme.accent + '55' },
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                ))}
               </View>
             </View>
           </View>
@@ -431,7 +500,16 @@ export default function ContentDetailsScreen() {
 
           {/* ── RATING + WATCHLIST ──────────────────────── */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            {rating > 0 ? (
+            {theme?.ratingCard === 'bounty' && rating > 0 ? (
+              <BountyPoster
+                theme={theme}
+                rating={rating}
+                voteCount={voteCount}
+                sinceYear={year}
+                ongoing={details.status === 'Returning Series' || details.status === 'In Production'}
+                fontReady={fontReady}
+              />
+            ) : rating > 0 ? (
               <View style={s.ratingRow}>
                 <View style={s.ratingBig}>
                   <Ionicons name="star" size={18} color="#10B981" />
@@ -700,6 +778,7 @@ export default function ContentDetailsScreen() {
         onCancel={() => setShowModal(false)}
       />
     </View>
+    </SpecialThemeContext.Provider>
   );
 }
 

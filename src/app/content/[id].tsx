@@ -12,6 +12,9 @@ import { useWatchlist } from '../../context/WatchlistContext';
 import { useWatching } from '../../context/WatchingContext';
 import { detectContentType, parseLocalDate, SeasonBreakdown, WatchingStatus, WATCHING_STATUS_LABELS } from '../../types';
 import { tmdbGet, REGION } from '../../services/tmdb';
+import { WatchlistPriority } from '../../services/watchlistStore';
+import { AddToWatchlistSheet, UpcomingToggleButton } from '../../components/lists';
+import OttInfoCard from '../../components/alerts/OttInfoCard';
 
 const IMG_W500 = 'https://image.tmdb.org/t/p/w500';
 const IMG_W780 = 'https://image.tmdb.org/t/p/w780';
@@ -227,9 +230,11 @@ export default function ContentDetailsScreen() {
     });
   };
 
-  const handleAddToWatchlist = async () => {
+  const handleAddToWatchlist = async (priority: WatchlistPriority, whyAdded: string) => {
     if (!details) return;
     await addItem({
+      priority,
+      why_added: whyAdded.trim() || undefined,
       id: details.id,
       media_type: type,
       title: details.title || details.name || '',
@@ -331,6 +336,8 @@ export default function ContentDetailsScreen() {
   const title = details.title || details.name || '';
   const year = (details.release_date || details.first_air_date || '').slice(0, 4);
   const rawDate = details.release_date || details.first_air_date || '';
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const isUnreleased = !rawDate || parseLocalDate(rawDate).getTime() > today.getTime();
   const releaseDate = rawDate
     ? parseLocalDate(rawDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     : null;
@@ -499,6 +506,19 @@ export default function ContentDetailsScreen() {
             </Animated.View>
           </Pressable>
 
+          {/* ── UPCOMING (unreleased titles) ────────────── */}
+          {isUnreleased && (
+            <View style={{ marginTop: 10 }}>
+              <UpcomingToggleButton
+                tmdbId={details.id}
+                mediaType={type}
+                title={title}
+                posterPath={details.poster_path}
+                fallbackReleaseDate={rawDate || null}
+              />
+            </View>
+          )}
+
           {/* ── GENRES ─────────────────────────────────── */}
           {genres.length > 0 && (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 14, marginHorizontal: -20 }} contentContainerStyle={{ paddingHorizontal: 20, gap: 8 }}>
@@ -518,6 +538,11 @@ export default function ContentDetailsScreen() {
               )}
             </View>
           ) : null}
+
+          {/* ── INDIA OTT ──────────────────────────────── */}
+          <View style={{ marginTop: 22 }}>
+            <OttInfoCard tmdbId={details.id} mediaType={type} />
+          </View>
 
           {/* ── WATCH PROVIDERS ────────────────────────── */}
           {hasProviders && (
@@ -666,32 +691,14 @@ export default function ContentDetailsScreen() {
         </View>
       </ScrollView>
 
-      {/* ── ADD TO WATCHLIST MODAL ────────────────── */}
-      <Modal visible={showModal} transparent animationType="fade" onRequestClose={() => setShowModal(false)}>
-        <Pressable style={s.modalOverlay} onPress={() => setShowModal(false)}>
-          <Pressable style={s.modalContent} onPress={e => e.stopPropagation()}>
-            <View style={s.modalHandle} />
-            <View style={{ flexDirection: 'row', gap: 14, marginBottom: 20 }}>
-              {details.poster_path && (
-                <Image source={{ uri: `${IMG_W500}${details.poster_path}` }} style={{ width: 56, height: 84, borderRadius: 10 }} />
-              )}
-              <View style={{ flex: 1, justifyContent: 'center' }}>
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }} numberOfLines={2}>{title}</Text>
-                <Text style={{ color: '#71717A', fontSize: 13, fontWeight: '500', marginTop: 4 }}>
-                  {type === 'tv' ? 'Series' : 'Movie'}{runtime ? ` · ${runtime}` : ''}
-                </Text>
-              </View>
-            </View>
-            <Pressable style={s.modalConfirmBtn} onPress={handleAddToWatchlist}>
-              <Ionicons name="bookmark" size={18} color="#000" />
-              <Text style={s.modalConfirmText}>Add to Watchlist</Text>
-            </Pressable>
-            <Pressable style={s.modalCancelBtn} onPress={() => setShowModal(false)}>
-              <Text style={s.modalCancelText}>Cancel</Text>
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* ── ADD TO WATCHLIST SHEET ────────────────── */}
+      <AddToWatchlistSheet
+        visible={showModal}
+        title={title}
+        subtitle={`${type === 'tv' ? 'Series' : 'Movie'}${runtime ? ` · ${runtime}` : ''}`}
+        onConfirm={handleAddToWatchlist}
+        onCancel={() => setShowModal(false)}
+      />
     </View>
   );
 }

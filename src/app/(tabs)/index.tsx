@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useWatching } from '../../context/WatchingContext';
+import AlertsBellButton from '../../components/alerts/AlertsBellButton';
 import { parseLocalDate, WatchingItem } from '../../types';
 import { tmdbGet, REGION } from '../../services/tmdb';
 import { getProgress, localDateKey } from '../../services/watchingStore';
@@ -194,6 +195,9 @@ export default function HomeScreen() {
       {/* ── Header ──────────────────────────────────── */}
       <View className="flex-row items-center justify-center px-5 mb-5">
         <Text className="text-emerald-500 text-2xl font-extrabold tracking-[5px]">RUNESTONE</Text>
+        <View style={{ position: 'absolute', right: 20 }}>
+          <AlertsBellButton />
+        </View>
       </View>
 
       {/* ── Insights Stats (2×2 Grid) ────────────── */}

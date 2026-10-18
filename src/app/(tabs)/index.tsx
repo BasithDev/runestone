@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useWatching } from '../../context/WatchingContext';
 import AlertsBellButton from '../../components/alerts/AlertsBellButton';
+import StatusPill from '../../components/tracking/StatusPill';
 import { parseLocalDate, WatchingItem } from '../../types';
 import { tmdbGet, REGION } from '../../services/tmdb';
 import { getProgress, localDateKey } from '../../services/watchingStore';
@@ -338,6 +339,7 @@ export default function HomeScreen() {
                           : `S${item.currentSeason} E${item.currentEpisode} • ${percentage}%`}
                       </Text>
                     </LinearGradient>
+                    <StatusPill status={item.status} solid style={{ position: 'absolute', top: 8, left: 8 }} />
                     {!isMovie && (
                       atEnd ? (
                         <Pressable onPress={openProgress} hitSlop={6} style={quickStyles.finish}>

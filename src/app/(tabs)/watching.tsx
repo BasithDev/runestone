@@ -215,11 +215,9 @@ function SeriesCard({ item, onPress }: { item: WatchingItem; onPress: () => void
               <Text style={{ color: '#52525B' }}> / </Text>
               S{item.totalSeasons} E{item.totalEpisodes}
             </Text>
-            {(item.status === 'rewatching' || item.status === 'on_hold' || item.status === 'dropped') && (
-              <View style={[s.miniBadge, { backgroundColor: statusCfg.bg }]}>
-                <Text style={[s.miniBadgeText, { color: statusCfg.color }]}>{statusCfg.label}</Text>
-              </View>
-            )}
+            <View style={[s.miniBadge, { backgroundColor: statusCfg.bg }]}>
+              <Text style={[s.miniBadgeText, { color: statusCfg.color }]}>{statusCfg.label}</Text>
+            </View>
           </View>
 
           {/* Progress bar */}

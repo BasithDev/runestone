@@ -357,6 +357,7 @@ export default function UpcomingScreen() {
 
       {tab === 'mine' ? (
         <FlatList
+          key="mine-list"
           data={rows}
           keyExtractor={r => r.key}
           renderItem={renderRow}
@@ -391,6 +392,7 @@ export default function UpcomingScreen() {
         </View>
       ) : (
         <FlatList
+          key="browse-grid"
           data={movies}
           keyExtractor={(item) => String(item.id)}
           numColumns={2}

@@ -128,6 +128,14 @@ export function markAllRead(): Promise<void> {
   return mutate(st => { st.events = st.events.map(e => (e.read ? e : { ...e, read: true })); return st; });
 }
 
+export function markRead(id: string): Promise<void> {
+  return mutate(st => { st.events = st.events.map(e => (e.id === id && !e.read ? { ...e, read: true } : e)); return st; });
+}
+
+export function clearEvents(): Promise<void> {
+  return mutate(st => { st.events = []; return st; });
+}
+
 export function setLastFullRefresh(iso: string): Promise<void> {
   return mutate(st => { st.lastFullRefresh = iso; return st; });
 }

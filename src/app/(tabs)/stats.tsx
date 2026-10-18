@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { ScrollView, Text, View, Pressable, StyleSheet, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -15,9 +15,25 @@ import StreakCards from '../../components/stats/StreakCards';
 import LibraryList from '../../components/stats/LibraryList';
 import RecentActivity from '../../components/stats/RecentActivity';
 
+/**
+ * Mount the screen in stages so the tab transition and the first cards
+ * animate smoothly: 0 = hero + format split, 1 = charts, 2 = library + feed.
+ */
+function useStagedMount(stages: number): number {
+  const [stage, setStage] = useState(0);
+  useEffect(() => {
+    if (stage >= stages) return;
+    let raf = 0;
+    const t = setTimeout(() => { raf = requestAnimationFrame(() => setStage(n => n + 1)); }, stage === 0 ? 120 : 80);
+    return () => { clearTimeout(t); cancelAnimationFrame(raf); };
+  }, [stage, stages]);
+  return stage;
+}
+
 export default function StatsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const stage = useStagedMount(2);
   const {
     library, watchLog, currentStreak, longestStreak, availableYears,
     getPeriodStats, getGenreStats, directorStats,
@@ -75,10 +91,11 @@ export default function StatsScreen() {
             <HeroCard watchLog={watchLog} titles={library.length} streak={currentStreak} />
           </FadeSlide>
           <FadeSlide index={next()}>
-            <ActivityHeatmap watchLog={watchLog} />
-          </FadeSlide>
-          <FadeSlide index={next()}>
             <FormatSplit library={library} selected={typeFilter} onSelect={setTypeFilter} />
+          </FadeSlide>
+          {stage >= 1 && (<>
+          <FadeSlide index={next()}>
+            <ActivityHeatmap watchLog={watchLog} />
           </FadeSlide>
           <FadeSlide index={next()}>
             <MonthBars
@@ -92,6 +109,8 @@ export default function StatsScreen() {
           <FadeSlide index={next()}>
             <StreakCards current={currentStreak} best={longestStreak} />
           </FadeSlide>
+          </>)}
+          {stage >= 2 && (<>
           <FadeSlide index={next()}>
             <LibraryList
               library={library} watchLog={watchLog} year={selectedYear}
@@ -102,6 +121,7 @@ export default function StatsScreen() {
           <FadeSlide index={next()}>
             <RecentActivity watchLog={watchLog} />
           </FadeSlide>
+          </>)}
         </>
       )}
 

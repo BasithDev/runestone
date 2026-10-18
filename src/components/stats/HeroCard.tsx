@@ -4,23 +4,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { WatchLogEntry } from '../../types';
 import { dailyActivity, formatDuration } from '../../services/statsInsights';
-import { ACCENT, CountUp, EMPTY_CELL } from './shared';
+import { ACCENT, CountUp, EMPTY_CELL, GrowBar } from './shared';
 
 function StripBar({ ratio, today, i }: { ratio: number; today: boolean; i: number }) {
-  const h = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(h, { toValue: ratio, duration: 600, delay: 300 + i * 30, useNativeDriver: false }).start();
-  }, [ratio]);
   return (
     <View style={s.stripCol}>
-      <Animated.View
+      <GrowBar
+        axis="y"
+        delay={300 + i * 30}
+        replayKey={ratio}
         style={[
           s.stripBar,
-          {
-            height: h.interpolate({ inputRange: [0, 1], outputRange: [3, 44] }),
-            backgroundColor: ratio > 0 ? ACCENT : EMPTY_CELL,
-            opacity: today ? 1 : 0.55,
-          },
+          { height: 3 + ratio * 41, backgroundColor: ratio > 0 ? ACCENT : EMPTY_CELL, opacity: today ? 1 : 0.55 },
         ]}
       />
     </View>

@@ -3,25 +3,20 @@ import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { MONTH_NAMES, PeriodStats, WatchLogEntry } from '../../types';
 import { formatDuration, monthlyActivity } from '../../services/statsInsights';
-import { ACCENT, CHART_ORDER_CFG, EMPTY_CELL, SectionTitle, sh } from './shared';
+import { ACCENT, CHART_ORDER_CFG, EMPTY_CELL, GrowBar, SectionTitle, sh } from './shared';
 
 const BAR_H = 120;
 
 function Bar({ ratio, selected, dim, i, year }: { ratio: number; selected: boolean; dim: boolean; i: number; year: number }) {
-  const h = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    h.setValue(0);
-    Animated.timing(h, { toValue: ratio, duration: 650, delay: i * 50, useNativeDriver: false }).start();
-  }, [ratio, year]);
   return (
-    <Animated.View
+    <GrowBar
+      axis="y"
+      delay={i * 40}
+      duration={550}
+      replayKey={`${year}-${ratio}`}
       style={[
         s.bar,
-        {
-          height: h.interpolate({ inputRange: [0, 1], outputRange: [4, BAR_H] }),
-          backgroundColor: ratio > 0 ? ACCENT : EMPTY_CELL,
-          opacity: dim ? 0.35 : 1,
-        },
+        { height: 4 + ratio * (BAR_H - 4), backgroundColor: ratio > 0 ? ACCENT : EMPTY_CELL, opacity: dim ? 0.35 : 1 },
         selected && s.barSel,
       ]}
     />

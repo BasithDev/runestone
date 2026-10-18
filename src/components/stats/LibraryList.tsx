@@ -39,14 +39,12 @@ function Chip({ label, count, active, onPress, dot }: { label: string; count: nu
   );
 }
 
+// Static on purpose: a list can hold many rows, and animating each one
+// would compete with scrolling.
 function ProgressBar({ ratio, color }: { ratio: number; color: string }) {
-  const w = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(w, { toValue: Math.min(1, ratio), duration: 600, useNativeDriver: false }).start();
-  }, [ratio]);
   return (
     <View style={s.progTrack}>
-      <Animated.View style={[s.progFill, { backgroundColor: color, width: w.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]} />
+      <View style={[s.progFill, { backgroundColor: color, width: `${Math.min(1, ratio) * 100}%` }]} />
     </View>
   );
 }

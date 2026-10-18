@@ -2,18 +2,14 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { GenreStats } from '../../types';
 import { DirectorStat } from '../../services/watchingStore';
-import { ACCENT, SectionTitle, sh } from './shared';
+import { ACCENT, GrowBar, SectionTitle, sh } from './shared';
 
 function Row({ g, ratio, i }: { g: GenreStats; ratio: number; i: number }) {
-  const w = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(w, { toValue: ratio, duration: 700, delay: 200 + i * 80, useNativeDriver: false }).start();
-  }, [ratio]);
   return (
     <View style={s.row}>
       <Text style={s.name} numberOfLines={1}>{g.name}</Text>
       <View style={s.track}>
-        <Animated.View style={[s.fill, { width: w.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]} />
+        <GrowBar axis="x" delay={200 + i * 80} duration={650} replayKey={ratio} style={[s.fill, { width: `${ratio * 100}%` }]} />
       </View>
       <Text style={s.count}>{g.count}</Text>
     </View>

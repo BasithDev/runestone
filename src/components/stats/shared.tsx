@@ -68,17 +68,47 @@ export function ScalePressable({
   );
 }
 
-/** Number that counts up to `value`. */
+/**
+ * Number that counts up to `value`. Re-renders at most ~20×/s (not every
+ * frame) so it doesn't compete with the screen's other work on the JS thread.
+ */
 export function CountUp({ value, style, format }: { value: number; style?: any; format?: (n: number) => string }) {
-  const a = useRef(new Animated.Value(0)).current;
   const [n, setN] = useState(0);
   useEffect(() => {
-    a.setValue(0);
-    const id = a.addListener(({ value: v }) => setN(v));
-    Animated.timing(a, { toValue: value, duration: 1100, useNativeDriver: false }).start();
-    return () => a.removeListener(id);
+    const start = Date.now(), duration = 900;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      const t = Math.min(1, (Date.now() - start) / duration);
+      setN(value * (1 - Math.pow(1 - t, 3))); // ease-out cubic
+      if (t < 1) timer = setTimeout(tick, 50);
+    };
+    timer = setTimeout(tick, 50);
+    return () => clearTimeout(timer);
   }, [value]);
   return <Text style={style}>{format ? format(n) : Math.round(n).toLocaleString()}</Text>;
+}
+
+/**
+ * A bar drawn at its final size that grows in via a native-driven scale
+ * transform (no per-frame layout on the JS thread).
+ * `axis` 'x' grows from the left, 'y' grows from the bottom.
+ */
+export function GrowBar({
+  axis, style, delay = 0, duration = 600, replayKey,
+}: {
+  axis: 'x' | 'y'; style: StyleProp<ViewStyle>; delay?: number; duration?: number; replayKey?: unknown;
+}) {
+  const a = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    a.setValue(0);
+    Animated.timing(a, { toValue: 1, duration, delay, useNativeDriver: true }).start();
+  }, [replayKey]);
+  const transform = axis === 'x' ? [{ scaleX: a }] : [{ scaleY: a }];
+  return (
+    <Animated.View
+      style={[style, { transform, transformOrigin: axis === 'x' ? 'left' : 'bottom' }]}
+    />
+  );
 }
 
 export function SectionTitle({ title, right }: { title: string; right?: React.ReactNode }) {

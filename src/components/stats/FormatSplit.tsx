@@ -15,7 +15,7 @@ export default function FormatSplit({
   const grow = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.timing(grow, { toValue: 1, duration: 900, delay: 200, useNativeDriver: false }).start();
+    Animated.timing(grow, { toValue: 1, duration: 800, delay: 200, useNativeDriver: true }).start();
   }, []);
 
   const rows = useMemo(() => {
@@ -39,7 +39,7 @@ export default function FormatSplit({
         <Text style={[sh.tip, !tip && sh.tipHint]}>{tip ?? 'Tap a segment or a row'}</Text>
 
         <View style={s.track} onLayout={e => setW(e.nativeEvent.layout.width)}>
-          <Animated.View style={{ width: grow.interpolate({ inputRange: [0, 1], outputRange: [0, w] }), overflow: 'hidden', borderRadius: 4 }}>
+          <Animated.View style={{ transform: [{ scaleX: grow }], transformOrigin: 'left', borderRadius: 4 }}>
             <View style={[s.barRow, { width: w }]}>
               {shown.map(r => (
                 <Pressable

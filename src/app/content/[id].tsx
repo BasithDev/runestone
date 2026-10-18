@@ -426,14 +426,7 @@ export default function ContentDetailsScreen() {
             locations={theme ? undefined : [0, 0.55, 1]}
             style={StyleSheet.absoluteFill}
           />
-          {theme && (
-            <SpinningEmblem
-              icon={theme.heroIcon}
-              color={theme.accent + '2E'}
-              size={170}
-              style={{ top: insets.top + 30, right: -40 }}
-            />
-          )}
+
 
           {/* Back button */}
           <Pressable
@@ -500,6 +493,15 @@ export default function ContentDetailsScreen() {
 
           {/* ── RATING + WATCHLIST ──────────────────────── */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            {/* Themed emblem sits on the plain page background, beside the rating card */}
+            {theme && (
+              <SpinningEmblem
+                icon={theme.heroIcon}
+                color={theme.accent + '33'}
+                size={120}
+                style={{ right: 70, top: '50%', marginTop: -60 }}
+              />
+            )}
             {theme?.ratingCard === 'bounty' && rating > 0 ? (
               <BountyPoster
                 theme={theme}

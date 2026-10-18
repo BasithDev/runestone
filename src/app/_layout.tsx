@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { WatchlistProvider } from '../context/WatchlistContext';
 import { WatchingProvider } from '../context/WatchingContext';
+import { UpcomingProvider } from '../context/UpcomingContext';
 import { useAlertsBootstrap } from '../services/backgroundRefresh';
 import { useNotificationRouting } from '../services/notifications';
 
@@ -18,6 +19,7 @@ export default function RootLayout() {
   return (
     <WatchlistProvider>
     <WatchingProvider>
+    <UpcomingProvider>
       <StatusBar style="light" />
       <AlertsBootstrap />
       <Stack
@@ -57,6 +59,7 @@ export default function RootLayout() {
           }}
         />
       </Stack>
+    </UpcomingProvider>
     </WatchingProvider>
     </WatchlistProvider>
   );

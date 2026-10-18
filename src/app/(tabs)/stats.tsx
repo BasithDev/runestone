@@ -9,10 +9,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useWatching } from '../../context/WatchingContext';
 import {
-  CONTENT_TYPES, MONTH_NAMES,
+  CONTENT_TYPES, MONTH_NAMES, ContentType, ComputedStats,
 } from '../../types';
 
 const { width: SW } = Dimensions.get('window');
+
+// Content type key → lifetime stats field ('movie' vs 'movies' differ).
+const LIFETIME_FIELD: Record<ContentType, Exclude<keyof ComputedStats['lifetime'], 'totalHours'>> = {
+  movie: 'movies',
+  series: 'series',
+  anime: 'anime',
+  other: 'other',
+};
 
 // ── Animated Counter ──────────────────────────────────
 function AnimatedCounter({ value, color }: { value: number; color: string }) {
@@ -180,7 +188,7 @@ export default function StatsScreen() {
                     label={ct.label}
                     shortLabel={ct.shortLabel}
                     color={ct.color}
-                    value={lifetimeStats[ct.key as keyof typeof lifetimeStats] as number || 0}
+                    value={lifetimeStats[LIFETIME_FIELD[ct.key]]}
                   />
                 ))}
               </View>

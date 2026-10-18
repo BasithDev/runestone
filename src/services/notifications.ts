@@ -3,10 +3,9 @@
 // (`npx expo run:android` / EAS dev build). They are not supported in Expo Go
 // (Android, SDK 53+) and are skipped entirely on web.
 import { useEffect } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
-import { useRouter } from 'expo-router';
 import { getUpcomingItems } from './upcomingStore';
 import { titleKey, parseLocalDate } from '../types';
 
@@ -36,22 +35,26 @@ async function ensureChannel() {
   } catch { /* ignore */ }
 }
 
-// Permission is requested lazily and at most once per app session.
+// Permission is requested lazily. A grant is cached for the session; a denial
+// is cached too (so we never nag), except when we merely couldn't ask: in the
+// background task there is no UI to show the prompt, so only check there.
 let permissionPromise: Promise<boolean> | null = null;
 
 export function ensureNotificationPermission(): Promise<boolean> {
   if (!supported) return Promise.resolve(false);
   if (!permissionPromise) {
-    permissionPromise = (async () => {
+    const p = (async () => {
       try {
         await ensureChannel();
         const cur = await Notifications.getPermissionsAsync();
         if (cur.granted) return true;
         if (!cur.canAskAgain) return false;
+        if (AppState.currentState !== 'active') { permissionPromise = null; return false; }
         const res = await Notifications.requestPermissionsAsync();
         return res.granted;
-      } catch { return false; }
+      } catch { permissionPromise = null; return false; }
     })();
+    permissionPromise = p;
   }
   return permissionPromise;
 }
@@ -94,7 +97,8 @@ export async function cancelNotification(id: string | null | undefined): Promise
 
 /** Opens the right screen when a notification is tapped. Use once in the root layout. */
 export function useNotificationRouting() {
-  const router = useRouter();
+  // Required lazily so the background-task path (which imports this file) never loads the router.
+  const router = (require('expo-router') as typeof import('expo-router')).useRouter();
   const last = Notifications.useLastNotificationResponse();
   const id = last?.notification.request.identifier;
 

@@ -33,13 +33,48 @@ function serialize<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/**
+ * Runs `fn` after pending watching writes and before later ones, without the
+ * log backfill. For bulk replacement of the stored data (backup restore):
+ * caches are dropped afterwards so nothing stale survives.
+ */
+export function runExclusiveWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(async () => {
+    try { return await fn(); } finally { resetWatchCaches(); }
+  });
+  writeQueue = run.catch(() => undefined);
+  return run;
+}
+
 // ── Low-level storage (unserialized; call inside serialize) ──
+// The watch log and history are cached in memory (write-through) so every
+// serialized write doesn't re-read and re-parse thousands of entries. Cached
+// arrays are treated as immutable (copy on write), which also gives the
+// contexts a stable reference when nothing changed. Call resetWatchCaches()
+// after anything else rewrites those keys (backup restore).
+let logCache: WatchLogEntry[] | null = null;
+let historyCache: WatchHistoryEntry[] | null = null;
+
+export function resetWatchCaches() {
+  logCache = null;
+  historyCache = null;
+}
+
+/** Parses a stored JSON array. Corrupt data is kept under `<key>_corrupt` instead of being overwritten silently. */
+async function readArrayKey<T>(key: string): Promise<T[] | null> {
+  let raw: string | null = null;
+  try {
+    raw = await AsyncStorage.getItem(key);
+    if (raw == null) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as T[];
+  } catch { /* corrupt */ }
+  if (raw) AsyncStorage.setItem(`${key}_corrupt`, raw).catch(() => {});
+  return null;
+}
 
 async function readItems(): Promise<WatchingItem[]> {
-  try {
-    const raw = await AsyncStorage.getItem(WATCHING_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+  return (await readArrayKey<WatchingItem>(WATCHING_KEY)) ?? [];
 }
 
 async function writeItems(items: WatchingItem[]) {
@@ -47,14 +82,13 @@ async function writeItems(items: WatchingItem[]) {
 }
 
 async function readHistory(): Promise<WatchHistoryEntry[]> {
-  try {
-    const raw = await AsyncStorage.getItem(HISTORY_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+  if (!historyCache) historyCache = (await readArrayKey<WatchHistoryEntry>(HISTORY_KEY)) ?? [];
+  return historyCache;
 }
 
 async function writeHistory(entries: WatchHistoryEntry[]) {
   await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(entries));
+  historyCache = entries;
 }
 
 // ── Watch log (low-level) ─────────────────────────────
@@ -99,20 +133,20 @@ function backfillLog(items: WatchingItem[], history: WatchHistoryEntry[]): Watch
 }
 
 async function readLog(): Promise<WatchLogEntry[]> {
-  try {
-    const raw = await AsyncStorage.getItem(WATCH_LOG_KEY);
-    if (raw != null) return JSON.parse(raw);
-  } catch { /* fall through to rebuild */ }
+  if (logCache) return logCache;
+  const stored = await readArrayKey<WatchLogEntry>(WATCH_LOG_KEY);
+  if (stored) return (logCache = stored);
+  // Missing or corrupt: rebuild from the data we have.
   const log = backfillLog(await readItems(), await readHistory());
   await AsyncStorage.setItem(WATCH_LOG_KEY, JSON.stringify(log));
-  return log;
+  return (logCache = log);
 }
 
 async function appendLog(entries: WatchLogEntry[]) {
   if (entries.length === 0) return;
-  const log = await readLog();
-  log.push(...entries);
-  await AsyncStorage.setItem(WATCH_LOG_KEY, JSON.stringify(log));
+  const next = [...(await readLog()), ...entries];
+  await AsyncStorage.setItem(WATCH_LOG_KEY, JSON.stringify(next));
+  logCache = next;
 }
 
 /** Log entries for the change from `before` to `after` (episodes / movie completion). */
@@ -199,7 +233,7 @@ export function isAllWatched(item: WatchingItem): boolean {
 
 /** Number of episodes watched when the position is season/episode. */
 export function watchedAtPosition(seasons: SeasonBreakdown[], season: number, episode: number): number {
-  const aired = seasons.filter(s => s.episodes > 0);
+  const aired = seasons.filter(s => s.episodes > 0).sort((a, b) => a.season - b.season);
   if (aired.length === 0) return Math.max(0, episode);
   let count = 0;
   for (const s of aired) {
@@ -301,9 +335,15 @@ export function patchWatchingItem(tmdbId: number, mediaType: string, patch: Watc
     const idx = list.findIndex(i => same(i, tmdbId, mediaType));
     if (idx === -1) return;
     const before = list[idx];
-    list[idx] = { ...before, ...patch, lastWatched: new Date().toISOString() };
+    const merged = { ...before, ...patch };
+    const logs = progressLog(before, merged);
+    // Metadata-only patches (e.g. a showStatus refresh) are not "watching
+    // activity"; bumping lastWatched would reorder recents and the library.
+    const activity = logs.length > 0 || patch.status !== undefined
+      || patch.currentSeason !== undefined || patch.currentEpisode !== undefined;
+    list[idx] = activity ? { ...merged, lastWatched: new Date().toISOString() } : merged;
     await writeItems(list);
-    await appendLog(progressLog(before, list[idx]));
+    await appendLog(logs);
   });
 }
 
@@ -458,8 +498,7 @@ export function addToWatchHistory(item: WatchingItem): Promise<void> {
   return serialize(async () => {
     const history = await readHistory();
     const prior = history.some(h => same(h, item.tmdbId, item.mediaType));
-    history.push(buildHistoryEntry(item, prior));
-    await writeHistory(history);
+    await writeHistory([...history, buildHistoryEntry(item, prior)]);
   });
 }
 
@@ -473,8 +512,7 @@ export function markAsCompleted(tmdbId: number, mediaType: string): Promise<void
 
     const history = await readHistory();
     const prior = history.some(h => same(h, tmdbId, mediaType));
-    history.push(buildHistoryEntry(item, prior));
-    await writeHistory(history);
+    await writeHistory([...history, buildHistoryEntry(item, prior)]);
     await writeItems(list.filter(i => !same(i, tmdbId, mediaType)));
 
     // Completing counts whatever wasn't logged yet as watched.
@@ -564,7 +602,7 @@ export function computePeriodStats(log: WatchLogEntry[], year: number, month?: n
 export function computeGenreStats(history: WatchHistoryEntry[], items: WatchingItem[]): GenreStats[] {
   const counts: Record<string, number> = {};
   for (const t of watchedTitles(history, items)) {
-    for (const genre of t.genres) counts[genre] = (counts[genre] || 0) + 1;
+    for (const genre of t.genres ?? []) counts[genre] = (counts[genre] || 0) + 1;
   }
 
   const total = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
@@ -598,9 +636,14 @@ export function computeDirectorStats(
     .slice(0, limit);
 }
 
-/** Streaks are consecutive local days with anything watched. */
+/** Streaks are consecutive local days with anything watched (net of unmarked corrections). */
 export function computeStreak(log: WatchLogEntry[]): { current: number; longest: number } {
-  const dates = [...new Set(log.filter(e => e.episodes > 0).map(e => localDateKey(e.at)))]
+  const net = new Map<string, number>();
+  for (const e of log) {
+    const k = localDateKey(e.at);
+    net.set(k, (net.get(k) ?? 0) + e.episodes);
+  }
+  const dates = [...net.entries()].filter(([, n]) => n > 0).map(([k]) => k)
     .sort((a, b) => b.localeCompare(a));
   if (dates.length === 0) return { current: 0, longest: 0 };
 

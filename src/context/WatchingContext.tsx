@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   WatchingItem, WatchHistoryEntry, WatchLogEntry,
   ComputedStats, PeriodStats, GenreStats,
@@ -61,17 +61,34 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
   const [watchLog, setWatchLog] = useState<WatchLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Load data on mount
-  const loadData = useCallback(async () => {
-    await repairCaughtUpProgress();
-    const [w, h, l] = await Promise.all([getWatchingItems(), getWatchHistory(), getWatchLog()]);
-    setItems(w);
-    setHistory(h);
-    setWatchLog(l);
-    setLoading(false);
+  // Latest-wins: overlapping loads (rapid taps) must not apply out of order.
+  const loadSeq = useRef(0);
+
+  // Re-read the stores. History and the watch log come from the store's
+  // write-through cache, so they keep the same array identity when unchanged
+  // and the derived stats below don't recompute on every action.
+  const reload = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    try {
+      const [w, h, l] = await Promise.all([getWatchingItems(), getWatchHistory(), getWatchLog()]);
+      if (seq !== loadSeq.current) return;
+      // Items are a fresh parse every time; keep the old reference if nothing changed.
+      setItems(prev => (JSON.stringify(prev) === JSON.stringify(w) ? prev : w));
+      setHistory(h);
+      setWatchLog(l);
+    } finally {
+      // Never leave screens on a spinner if storage throws.
+      if (seq === loadSeq.current) setLoading(false);
+    }
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  // Public refresh / first load: also runs the one-off caught-up repair.
+  const loadData = useCallback(async () => {
+    try { await repairCaughtUpProgress(); } catch { /* repair is best-effort */ }
+    await reload();
+  }, [reload]);
+
+  useEffect(() => { loadData().catch(() => {}); }, [reload]);
 
   // Split by status
   const watchingItems = useMemo(
@@ -91,50 +108,50 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
   // Actions
   const startWatching = useCallback(async (item: Omit<WatchingItem, 'startedAt' | 'lastWatched'>) => {
     const result = await addWatchingItem(item);
-    await loadData();
+    await reload();
     return result;
-  }, [loadData]);
+  }, [reload]);
 
   const updateProgressCb = useCallback(async (tmdbId: number, mediaType: string, updates: WatchingPatch) => {
     await patchWatchingItem(tmdbId, mediaType, updates);
-    await loadData();
-  }, [loadData]);
+    await reload();
+  }, [reload]);
 
   const markCompletedCb = useCallback(async (tmdbId: number, mediaType: string) => {
     await markAsCompleted(tmdbId, mediaType);
-    await loadData();
-  }, [loadData]);
+    await reload();
+  }, [reload]);
 
   const markCaughtUpCb = useCallback(async (tmdbId: number, mediaType: string) => {
     await markWatchingCaughtUp(tmdbId, mediaType);
-    await loadData();
-  }, [loadData]);
+    await reload();
+  }, [reload]);
 
   const putOnHoldCb = useCallback(async (tmdbId: number, mediaType: string, note: string) => {
     await putOnHold(tmdbId, mediaType, note);
-    await loadData();
-  }, [loadData]);
+    await reload();
+  }, [reload]);
 
   const dropCb = useCallback(async (tmdbId: number, mediaType: string, reason: string, rating?: number | null) => {
     await dropWatchingItem(tmdbId, mediaType, reason, rating);
-    await loadData();
-  }, [loadData]);
+    await reload();
+  }, [reload]);
 
   const resumeCb = useCallback(async (tmdbId: number, mediaType: string) => {
     await resumeWatchingItem(tmdbId, mediaType);
-    await loadData();
-  }, [loadData]);
+    await reload();
+  }, [reload]);
 
   const advanceCb = useCallback(async (tmdbId: number, mediaType: string) => {
     const ok = await advanceWatchingItem(tmdbId, mediaType);
-    await loadData();
+    await reload();
     return ok;
-  }, [loadData]);
+  }, [reload]);
 
   const removeCb = useCallback(async (tmdbId: number, mediaType: string) => {
     await removeWatchingItem(tmdbId, mediaType);
-    await loadData();
-  }, [loadData]);
+    await reload();
+  }, [reload]);
 
   const isItemWatching = useCallback((tmdbId: number, mediaType: string) => {
     return items.some(i => i.tmdbId === tmdbId && i.mediaType === mediaType);

@@ -22,7 +22,7 @@ export interface TrackableDetails {
   created_by?: { id?: number; name: string }[];
   genres?: { id: number; name: string }[];
   credits?: { crew?: { job: string; name: string }[] };
-  seasons?: { season_number: number; air_date?: string | null }[];
+  seasons?: { season_number: number; air_date?: string | null; episode_count?: number }[];
 }
 
 /** A season as fetched: only `air_date` of each episode is needed. */
@@ -102,7 +102,8 @@ export function buildTrackable(
 }
 
 // ── Fetch + session cache ─────────────────────────────
-const cache = new Map<string, Promise<TrackableBundle>>();
+const CACHE_MS = 30 * 60 * 1000; // aired-episode counts go stale in a long session
+const cache = new Map<string, { at: number; p: Promise<TrackableBundle> }>();
 
 async function load(mediaType: 'movie' | 'tv', tmdbId: number): Promise<TrackableBundle> {
   const details = await tmdbGet<TrackableDetails>(
@@ -116,10 +117,24 @@ async function load(mediaType: 'movie' | 'tv', tmdbId: number): Promise<Trackabl
       ? details.seasons.map(s => s.season_number)
       : Array.from({ length: details.number_of_seasons ?? 0 }, (_, i) => i + 1)
     ).filter(n => n > 0);
-    const results = await Promise.all(
-      numbers.map(n => tmdbGet<TrackableSeason>(`tv/${tmdbId}/season/${n}`).catch(() => null)),
-    );
-    seasons = results.filter((r): r is TrackableSeason => !!r);
+    const results = await Promise.all(numbers.map(async n => {
+      const path = `tv/${tmdbId}/season/${n}`;
+      try { return await tmdbGet<TrackableSeason>(path); }
+      catch {
+        try { return await tmdbGet<TrackableSeason>(path); } catch { return null; }
+      }
+    }));
+    // A season that failed twice must not silently vanish (the stored total would be
+    // too low for good): approximate it from the show's own episode_count instead.
+    seasons = results.map((r, i) => {
+      if (r) return r;
+      const meta = details.seasons?.find(s => s.season_number === numbers[i]);
+      const n = meta?.episode_count ?? 0;
+      return {
+        season_number: numbers[i], air_date: meta?.air_date,
+        episodes: Array.from({ length: n }, () => ({ air_date: meta?.air_date })),
+      };
+    });
   }
 
   return {
@@ -136,15 +151,16 @@ async function load(mediaType: 'movie' | 'tv', tmdbId: number): Promise<Trackabl
 /** Payload plus extra metadata (cached for the session; failures are not cached). */
 export function fetchTrackableBundle(mediaType: 'movie' | 'tv', tmdbId: number): Promise<TrackableBundle> {
   const key = `${mediaType}-${tmdbId}`;
-  let p = cache.get(key);
-  if (!p) {
+  let hit = cache.get(key);
+  if (!hit || Date.now() - hit.at > CACHE_MS) {
     const fresh = load(mediaType, tmdbId);
-    p = fresh;
-    cache.set(key, fresh);
-    fresh.catch(() => { if (cache.get(key) === fresh) cache.delete(key); });
+    hit = { at: Date.now(), p: fresh };
+    cache.set(key, hit);
+    const entry = hit;
+    fresh.catch(() => { if (cache.get(key) === entry) cache.delete(key); });
   }
   // Fresh id per call so two starts never share an id.
-  return p.then(b => ({ ...b, item: { ...b.item, id: Date.now() } }));
+  return hit.p.then(b => ({ ...b, item: { ...b.item, id: Date.now() } }));
 }
 
 /** Full start-watching payload for a title. */

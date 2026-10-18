@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   View,
@@ -19,6 +19,7 @@ import { useWatchlist } from '../../context/WatchlistContext';
 import { tmdbGet } from '../../services/tmdb';
 import AddToWatchlistSheet from '../../components/lists/AddToWatchlistSheet';
 import { WatchlistPriority } from '../../services/watchlistStore';
+import YearPickerSheet from '../../components/YearPickerSheet';
 
 // ── Types ──────────────────────────────────────────────
 interface MediaItem {
@@ -62,6 +63,18 @@ function applyChipFilter(items: MediaItem[], chip: ChipType): MediaItem[] {
   let out = items.filter(i => i.poster_path);
   if (chip === 'Anime') out = out.filter(i => i.genre_ids?.includes(16));
   return out;
+}
+
+/** Release year of a movie/tv item ('' when unknown). */
+function itemYear(i: MediaItem): string {
+  return (i.release_date || i.first_air_date || '').slice(0, 4);
+}
+
+/** Client-side year filter (multi search, filmographies, trending). */
+function applyYearFilter(items: MediaItem[], year: number | null): MediaItem[] {
+  if (year == null) return items;
+  const y = String(year);
+  return items.filter(i => itemYear(i) === y);
 }
 
 // ── Result row component ─────────────────────────────
@@ -154,6 +167,9 @@ export default function SearchScreen() {
   const [trending, setTrending] = useState<MediaItem[]>([]);
   const [loadingTrending, setLoadingTrending] = useState(false);
   const [browseMode, setBrowseMode] = useState<'search' | 'person' | 'company'>('search');
+  const [year, setYear] = useState<number | null>(null);
+  const [yearPickerOpen, setYearPickerOpen] = useState(false);
+  const yearRef = useRef<number | null>(null); // read by fetchers without re-creating them
 
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
@@ -230,6 +246,7 @@ export default function SearchScreen() {
     (cid: string, pageNum: number) =>
       tmdbGet<{ results?: MediaItem[]; total_pages?: number }>('discover/movie', {
         with_companies: cid, sort_by: 'popularity.desc', page: pageNum,
+        primary_release_year: yearRef.current ?? undefined,
       }),
     [],
   );
@@ -254,7 +271,15 @@ export default function SearchScreen() {
     const path = chip === 'Movies' ? 'search/movie'
       : chip === 'Series' || chip === 'Anime' ? 'search/tv'
       : 'search/multi';
-    return tmdbGet<{ results?: MediaItem[]; total_pages?: number }>(path, { query: searchQuery, page: pageNum });
+    // search/movie and search/tv filter by year server-side; search/multi can't,
+    // so those results are filtered on the device (applyYearFilter).
+    const yr = yearRef.current ?? undefined;
+    return tmdbGet<{ results?: MediaItem[]; total_pages?: number }>(path, {
+      query: searchQuery,
+      page: pageNum,
+      ...(path === 'search/movie' ? { primary_release_year: yr } : {}),
+      ...(path === 'search/tv' ? { first_air_date_year: yr } : {}),
+    });
   }, []);
 
   // ── Execute search (debounced) ───────────────────────
@@ -329,6 +354,18 @@ export default function SearchScreen() {
       executeSearch(query, chip);
     }
   }, [query, browseMode, executeSearch]);
+
+  // ── Year filter ──────────────────────────────────────
+  const onYearChange = useCallback((y: number | null) => {
+    yearRef.current = y;
+    setYear(y);
+    if (browseMode === 'company' && companyId) fetchCompanyMovies(companyId);
+    else if (browseMode === 'search' && query.trim()) executeSearch(query, activeChip);
+    // person mode: credits are already loaded; filtered on render
+  }, [browseMode, companyId, query, activeChip, fetchCompanyMovies, executeSearch]);
+
+  const visibleResults = useMemo(() => applyYearFilter(results, year), [results, year]);
+  const visibleTrending = useMemo(() => applyYearFilter(trending, year), [trending, year]);
 
   // ── Load more (infinite scroll) ──────────────────────
   const loadMore = useCallback(async () => {
@@ -443,7 +480,7 @@ export default function SearchScreen() {
           Top 10 Trending {activeChip === 'All' ? 'Now' : activeChip}
         </Text>
         <FlatList
-          data={trending}
+          data={visibleTrending}
           keyExtractor={(item) => `trending-${item.id}`}
           numColumns={2}
           columnWrapperStyle={{ justifyContent: 'space-between', marginBottom: 16 }}
@@ -520,6 +557,28 @@ export default function SearchScreen() {
         </View>
       );
     }
+    if (year !== null && visibleResults.length === 0) {
+      const serverFiltered = browseMode === 'company'
+        || (browseMode === 'search' && activeChip !== 'All' && activeChip !== 'Others');
+      return (
+        <View style={styles.emptyContainer}>
+          <View style={styles.emptyIcon}>
+            <Ionicons name="calendar-outline" size={32} color="#52525B" />
+          </View>
+          <Text style={styles.emptyTitle}>Nothing from {year}</Text>
+          <Text style={styles.emptySubtitle}>
+            {serverFiltered
+              ? 'Try another year or clear the year filter.'
+              : 'Pick Movies or Series for a full year search, or load more results.'}
+          </Text>
+          {!serverFiltered && page < totalPages && browseMode === 'search' && (
+            <Pressable onPress={loadMore} style={[styles.chip, styles.chipActive, { marginTop: 16 }]}>
+              <Text style={[styles.chipText, styles.chipTextActive]}>{loadingMore ? 'Loading…' : 'Load more results'}</Text>
+            </Pressable>
+          )}
+        </View>
+      );
+    }
     return null;
   };
 
@@ -574,6 +633,21 @@ export default function SearchScreen() {
             </Pressable>
           );
         })}
+        <View style={styles.chipDivider} />
+        <Pressable
+          style={[styles.chip, styles.yearChip, year !== null && styles.chipActive]}
+          onPress={() => setYearPickerOpen(true)}
+        >
+          <Ionicons name="calendar-outline" size={13} color={year !== null ? '#10B981' : '#71717A'} />
+          <Text style={[styles.chipText, year !== null && styles.chipTextActive]}>
+            {year ?? 'Year'}
+          </Text>
+          {year !== null && (
+            <Pressable onPress={() => onYearChange(null)} hitSlop={8}>
+              <Ionicons name="close-circle" size={14} color="#10B981" />
+            </Pressable>
+          )}
+        </Pressable>
       </ScrollView>
 
       {/* ── Results / Trending Fallback ────────────── */}
@@ -585,7 +659,7 @@ export default function SearchScreen() {
         renderTrendingSection()
       ) : (
         <FlatList
-          data={results}
+          data={visibleResults}
           keyExtractor={(item) => `${item.media_type || 'x'}-${item.id}`}
           renderItem={({ item }) => (
             <ResultRow
@@ -613,6 +687,14 @@ export default function SearchScreen() {
           ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
       )}
+
+      {/* ── YEAR PICKER ────────────────────────── */}
+      <YearPickerSheet
+        visible={yearPickerOpen}
+        value={year}
+        onSelect={onYearChange}
+        onClose={() => setYearPickerOpen(false)}
+      />
 
       {/* ── ADD TO WATCHLIST SHEET ─────────────── */}
       <AddToWatchlistSheet
@@ -677,6 +759,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A1A1A',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
+  },
+  chipDivider: {
+    width: 1,
+    alignSelf: 'stretch',
+    marginVertical: 6,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  yearChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   chipActive: {
     backgroundColor: 'rgba(16, 185, 129, 0.15)',

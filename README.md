@@ -2,6 +2,16 @@
 
 Runestone is a high-fidelity, local-first cinephile tracking application designed to catalogue and monitor personal viewings of Movies, TV Shows, Anime, and Documentaries. Unlike public platform alternatives, Runestone integrates all media platforms into a single, unified local environment with custom annotations, tracking priority queues, and granular episode-level watch counters.
 
+## Download (Android)
+
+**[⬇ Download the latest APK](https://github.com/BasithDev/runestone/releases/latest)** — open the latest release and tap `runestone-vX.Y.Z.apk`.
+
+1. Download the APK on your Android phone (64-bit, Android 7+).
+2. Open it and allow "Install unknown apps" for your browser when asked.
+3. The app checks this page for new versions and shows the changelog when an update is available.
+
+Your data stays on your phone. Use **Stats → ☁ → Export & Share** to back it up. See [CHANGELOG.md](CHANGELOG.md) for what's new.
+
 ---
 
 ## Project Details

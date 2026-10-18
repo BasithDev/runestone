@@ -1,20 +1,24 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  WatchingItem, WatchHistoryEntry, WatchingStatus,
-  ComputedStats, PeriodStats, GenreStats, ContentType,
+  WatchingItem, WatchHistoryEntry,
+  ComputedStats, PeriodStats, GenreStats,
 } from '../types';
 import {
-  getWatchingItems, addWatchingItem, updateWatchingProgress,
-  updateWatchingStatus, removeWatchingItem, getWatchingItem,
-  getWatchHistory, markAsCompleted, addToWatchHistory,
-  computeLifetimeStats, computePeriodStats, computeGenreStats,
+  getWatchingItems, addWatchingItem, patchWatchingItem,
+  updateWatchingStatus, removeWatchingItem,
+  getWatchHistory, markAsCompleted,
+  putOnHold, dropWatchingItem, resumeWatchingItem, advanceWatchingItem,
+  computeLifetimeStats, computePeriodStats, computeGenreStats, computeDirectorStats,
   computeStreak, getAvailableYears,
+  WatchingPatch, DirectorStat,
 } from '../services/watchingStore';
 
 interface WatchingContextType {
   // State
-  watchingItems: WatchingItem[];
-  awaitingItems: WatchingItem[];
+  watchingItems: WatchingItem[];   // watching + rewatching (In Progress)
+  awaitingItems: WatchingItem[];   // caught_up
+  onHoldItems: WatchingItem[];
+  droppedItems: WatchingItem[];
   history: WatchHistoryEntry[];
   loading: boolean;
 
@@ -23,18 +27,21 @@ interface WatchingContextType {
   currentStreak: number;
   longestStreak: number;
   availableYears: number[];
+  directorStats: DirectorStat[];
 
   // Actions
   startWatching: (item: Omit<WatchingItem, 'startedAt' | 'lastWatched'>) => Promise<WatchingItem>;
-  updateProgress: (
-    tmdbId: number, mediaType: string,
-    updates: Partial<Pick<WatchingItem, 'currentSeason' | 'currentEpisode' | 'episodesWatched' | 'movieCompleted' | 'status'>>,
-  ) => Promise<void>;
+  updateProgress: (tmdbId: number, mediaType: string, updates: WatchingPatch) => Promise<void>;
   markCompleted: (tmdbId: number, mediaType: string) => Promise<void>;
   markCaughtUp: (tmdbId: number, mediaType: string) => Promise<void>;
+  putOnHold: (tmdbId: number, mediaType: string, note: string) => Promise<void>;
+  dropItem: (tmdbId: number, mediaType: string, reason: string, rating?: number | null) => Promise<void>;
+  resume: (tmdbId: number, mediaType: string) => Promise<void>;
+  advance: (tmdbId: number, mediaType: string) => Promise<boolean>;
   remove: (tmdbId: number, mediaType: string) => Promise<void>;
   isItemWatching: (tmdbId: number, mediaType: string) => boolean;
   getItem: (tmdbId: number, mediaType: string) => WatchingItem | undefined;
+  getHistoryEntries: (tmdbId: number, mediaType: string) => WatchHistoryEntry[];
   refresh: () => Promise<void>;
 
   // Stats helpers
@@ -59,14 +66,18 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Split into active watching vs caught_up
-  const watchingItems = useMemo(() => items.filter(i => i.status === 'watching'), [items]);
+  // Split by status
+  const watchingItems = useMemo(
+    () => items.filter(i => i.status === 'watching' || i.status === 'rewatching'), [items]);
   const awaitingItems = useMemo(() => items.filter(i => i.status === 'caught_up'), [items]);
+  const onHoldItems = useMemo(() => items.filter(i => i.status === 'on_hold'), [items]);
+  const droppedItems = useMemo(() => items.filter(i => i.status === 'dropped'), [items]);
 
   // Computed stats
   const lifetimeStats = useMemo(() => computeLifetimeStats(history), [history]);
   const streak = useMemo(() => computeStreak(history), [history]);
   const availableYears = useMemo(() => getAvailableYears(history), [history]);
+  const directorStats = useMemo(() => computeDirectorStats(history), [history]);
 
   // Actions
   const startWatching = useCallback(async (item: Omit<WatchingItem, 'startedAt' | 'lastWatched'>) => {
@@ -75,11 +86,8 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
     return result;
   }, [loadData]);
 
-  const updateProgressCb = useCallback(async (
-    tmdbId: number, mediaType: string,
-    updates: Partial<Pick<WatchingItem, 'currentSeason' | 'currentEpisode' | 'episodesWatched' | 'movieCompleted' | 'status'>>,
-  ) => {
-    await updateWatchingProgress(tmdbId, mediaType, updates);
+  const updateProgressCb = useCallback(async (tmdbId: number, mediaType: string, updates: WatchingPatch) => {
+    await patchWatchingItem(tmdbId, mediaType, updates);
     await loadData();
   }, [loadData]);
 
@@ -91,6 +99,27 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
   const markCaughtUpCb = useCallback(async (tmdbId: number, mediaType: string) => {
     await updateWatchingStatus(tmdbId, mediaType, 'caught_up');
     await loadData();
+  }, [loadData]);
+
+  const putOnHoldCb = useCallback(async (tmdbId: number, mediaType: string, note: string) => {
+    await putOnHold(tmdbId, mediaType, note);
+    await loadData();
+  }, [loadData]);
+
+  const dropCb = useCallback(async (tmdbId: number, mediaType: string, reason: string, rating?: number | null) => {
+    await dropWatchingItem(tmdbId, mediaType, reason, rating);
+    await loadData();
+  }, [loadData]);
+
+  const resumeCb = useCallback(async (tmdbId: number, mediaType: string) => {
+    await resumeWatchingItem(tmdbId, mediaType);
+    await loadData();
+  }, [loadData]);
+
+  const advanceCb = useCallback(async (tmdbId: number, mediaType: string) => {
+    const ok = await advanceWatchingItem(tmdbId, mediaType);
+    await loadData();
+    return ok;
   }, [loadData]);
 
   const removeCb = useCallback(async (tmdbId: number, mediaType: string) => {
@@ -106,6 +135,10 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
     return items.find(i => i.tmdbId === tmdbId && i.mediaType === mediaType);
   }, [items]);
 
+  const getHistoryEntries = useCallback((tmdbId: number, mediaType: string) => {
+    return history.filter(h => h.tmdbId === tmdbId && h.mediaType === mediaType);
+  }, [history]);
+
   // Period stats (not memoized since year/month params change)
   const getPeriodStats = useCallback((year: number, month?: number | null) => {
     return computePeriodStats(history, year, month);
@@ -118,26 +151,35 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
   const ctx = useMemo<WatchingContextType>(() => ({
     watchingItems,
     awaitingItems,
+    onHoldItems,
+    droppedItems,
     history,
     loading,
     lifetimeStats,
     currentStreak: streak.current,
     longestStreak: streak.longest,
     availableYears,
+    directorStats,
     startWatching,
     updateProgress: updateProgressCb,
     markCompleted: markCompletedCb,
     markCaughtUp: markCaughtUpCb,
+    putOnHold: putOnHoldCb,
+    dropItem: dropCb,
+    resume: resumeCb,
+    advance: advanceCb,
     remove: removeCb,
     isItemWatching,
     getItem: getItemCb,
+    getHistoryEntries,
     refresh: loadData,
     getPeriodStats,
     getGenreStats,
   }), [
-    watchingItems, awaitingItems, history, loading, lifetimeStats, streak, availableYears,
-    startWatching, updateProgressCb, markCompletedCb, markCaughtUpCb, removeCb,
-    isItemWatching, getItemCb, loadData, getPeriodStats, getGenreStats,
+    watchingItems, awaitingItems, onHoldItems, droppedItems, history, loading, lifetimeStats, streak,
+    availableYears, directorStats,
+    startWatching, updateProgressCb, markCompletedCb, markCaughtUpCb, putOnHoldCb, dropCb, resumeCb,
+    advanceCb, removeCb, isItemWatching, getItemCb, getHistoryEntries, loadData, getPeriodStats, getGenreStats,
   ]);
 
   return <WatchingContext.Provider value={ctx}>{children}</WatchingContext.Provider>;

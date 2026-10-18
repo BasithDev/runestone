@@ -13,7 +13,7 @@ export const CONTENT_TYPES: ContentTypeConfig[] = [
   { key: 'movie', label: 'Movies', shortLabel: 'M', icon: 'film-outline', color: '#10B981' },
   { key: 'series', label: 'Series', shortLabel: 'S', icon: 'tv-outline', color: '#3B82F6' },
   { key: 'anime', label: 'Anime', shortLabel: 'A', icon: 'sparkles-outline', color: '#A855F7' },
-  { key: 'other', label: 'Other', shortLabel: 'OC', icon: 'albums-outline', color: '#F59E0B' },
+  { key: 'other', label: 'Docs & Other', shortLabel: 'OC', icon: 'albums-outline', color: '#F59E0B' },
 ];
 
 // ── Watch Status ───────────────────────────────────────
@@ -72,6 +72,7 @@ export interface WatchingItem {
   dropRating?: number;    // user's rating out of 10.0 when dropped
   rewatchCount?: number;  // completed watches before this one
   directors?: string[];   // director names (movies) / creators (tv)
+  showStatus?: string;    // TMDb show status for tv (e.g. 'Ended', 'Returning Series')
   // Timestamps
   startedAt: string;   // ISO date — when added to watching
   lastWatched: string;  // ISO date — last progress update
@@ -188,6 +189,9 @@ export function detectContentType(
   genres?: { id: number; name: string }[],
 ): ContentType {
   const ids = genreIds || genres?.map(g => g.id) || [];
+  // Documentary (99, movie or tv) and TV Reality (10764) / Talk (10767) → other
+  if (ids.includes(99)) return 'other';
+  if (mediaType === 'tv' && (ids.includes(10764) || ids.includes(10767))) return 'other';
   // Animation (16) genre → anime
   if (mediaType === 'tv' && ids.includes(16)) return 'anime';
   if (mediaType === 'movie') return 'movie';

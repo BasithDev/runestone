@@ -15,7 +15,9 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useWatching } from '../../context/WatchingContext';
-import { parseLocalDate } from '../../types';
+import { parseLocalDate, WatchingItem } from '../../types';
+import { tmdbGet, REGION } from '../../services/tmdb';
+import { getProgress, localDateKey } from '../../services/watchingStore';
 
 // ── Types ──────────────────────────────────────────────
 interface MediaItem {
@@ -88,13 +90,25 @@ function PosterCard({ item }: { item: MediaItem }) {
 }
 
 
+const quickStyles = StyleSheet.create({
+  plus: {
+    position: 'absolute', top: 8, right: 8, width: 28, height: 28, borderRadius: 14,
+    backgroundColor: '#10B981', justifyContent: 'center', alignItems: 'center',
+  },
+  finish: {
+    position: 'absolute', top: 8, right: 8, flexDirection: 'row', alignItems: 'center', gap: 3,
+    paddingHorizontal: 8, height: 26, borderRadius: 13, backgroundColor: '#10B981',
+  },
+  finishText: { color: '#000', fontSize: 10, fontWeight: '800' },
+});
+
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [upcoming, setUpcoming] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const { lifetimeStats, currentStreak, watchingItems } = useWatching();
+  const { lifetimeStats, currentStreak, watchingItems, advance } = useWatching();
 
   // Compute real insights from watching context
   const insights = useMemo(() => {
@@ -130,20 +144,16 @@ export default function HomeScreen() {
   useEffect(() => {
     (async () => {
       try {
-        const key = process.env.EXPO_PUBLIC_TMDB_API_KEY;
-        if (!key) { setError(true); setLoading(false); return; }
-
-        // Fetch pages 1 and 2 to get a wider selection of strictly unreleased movies
-        const [res1, res2] = await Promise.all([
-          fetch(`https://api.themoviedb.org/3/movie/upcoming?api_key=${key}&language=en-US&page=1`),
-          fetch(`https://api.themoviedb.org/3/movie/upcoming?api_key=${key}&language=en-US&page=2`)
+        // Fetch pages 1 and 2 (India region) to get a wider selection of unreleased movies
+        const [json1, json2] = await Promise.all([
+          tmdbGet<{ results?: MediaItem[] }>('movie/upcoming', { region: REGION, page: 1 }),
+          tmdbGet<{ results?: MediaItem[] }>('movie/upcoming', { region: REGION, page: 2 }),
         ]);
-        const [json1, json2] = await Promise.all([res1.json(), res2.json()]);
 
         const allResults = [...(json1.results || []), ...(json2.results || [])];
 
         if (allResults.length) {
-          const todayStr = new Date().toISOString().split('T')[0];
+          const todayStr = localDateKey();
           
           // Filter strictly for future releases (unreleased)
           const strictlyUpcoming = allResults.filter((i: MediaItem) => {
@@ -290,13 +300,14 @@ export default function HomeScreen() {
             horizontal
             showsHorizontalScrollIndicator={false}
             renderItem={({ item }) => {
-              const percentage = item.totalEpisodes && item.episodesWatched
-                ? Math.round((item.episodesWatched / item.totalEpisodes) * 100)
-                : item.movieCompleted ? 100 : 0;
+              const isMovie = item.mediaType === 'movie';
+              const { percent: percentage, watched, total } = getProgress(item);
+              const atEnd = !isMovie && total > 0 && watched >= total;
+              const openProgress = () => router.push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } } as any);
               return (
                 <Pressable
                   style={{ marginRight: CARD_GAP }}
-                  onPress={() => router.push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } } as any)}
+                  onPress={openProgress}
                 >
                   <View
                     className="rounded-2xl overflow-hidden bg-surface-light border border-white/5"
@@ -318,11 +329,23 @@ export default function HomeScreen() {
                         <View style={{ height: '100%', borderRadius: 2, backgroundColor: '#10B981', width: `${percentage}%` }} />
                       </View>
                       <Text style={{ color: '#71717A', fontSize: 9, fontWeight: '700', marginTop: 3 }}>
-                        {item.contentType === 'movie'
+                        {isMovie
                           ? (item.movieCompleted ? 'Completed' : 'In Progress')
                           : `S${item.currentSeason} E${item.currentEpisode} • ${percentage}%`}
                       </Text>
                     </LinearGradient>
+                    {!isMovie && (
+                      atEnd ? (
+                        <Pressable onPress={openProgress} hitSlop={6} style={quickStyles.finish}>
+                          <Ionicons name="checkmark-done" size={12} color="#000" />
+                          <Text style={quickStyles.finishText}>Finish</Text>
+                        </Pressable>
+                      ) : (
+                        <Pressable onPress={() => { advance(item.tmdbId, item.mediaType); }} hitSlop={6} style={quickStyles.plus}>
+                          <Ionicons name="add" size={18} color="#000" />
+                        </Pressable>
+                      )
+                    )}
                   </View>
                 </Pressable>
               );

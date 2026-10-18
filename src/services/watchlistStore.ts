@@ -76,10 +76,20 @@ export async function getWatchlist(): Promise<WatchlistItem[]> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    return JSON.parse(raw) as WatchlistItem[];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed as WatchlistItem[] : [];
   } catch {
     return [];
   }
+}
+
+// Read-modify-write goes through one queue so rapid taps (or an add racing a
+// poster download) can't read stale data and overwrite each other.
+let writeQueue: Promise<unknown> = Promise.resolve();
+function serialize<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(fn);
+  writeQueue = run.catch(() => undefined);
+  return run;
 }
 
 async function saveWatchlist(items: WatchlistItem[]) {
@@ -87,39 +97,40 @@ async function saveWatchlist(items: WatchlistItem[]) {
 }
 
 export async function addToWatchlist(item: Omit<WatchlistItem, 'added_at' | 'local_poster_uri'>): Promise<WatchlistItem> {
-  const list = await getWatchlist();
   const key = makeKey(item.id, item.media_type);
+  const find = (list: WatchlistItem[]) => list.find(i => makeKey(i.id, i.media_type) === key);
 
   // Skip if already exists
-  if (list.find(i => makeKey(i.id, i.media_type) === key)) {
-    return list.find(i => makeKey(i.id, i.media_type) === key)!;
-  }
+  const already = find(await getWatchlist());
+  if (already) return already;
 
-  // Download poster locally (native only)
+  // Download poster locally (native only) outside the queue so a slow network doesn't block other writes.
   const localUri = await downloadPoster(item.poster_path || '', item.id, item.media_type);
 
-  const entry: WatchlistItem = {
-    ...item,
-    added_at: new Date().toISOString(),
-    local_poster_uri: localUri,
-  };
-
-  list.push(entry);
-  await saveWatchlist(list);
-  return entry;
+  return serialize(async () => {
+    const list = await getWatchlist();
+    const dupe = find(list); // added while the poster was downloading
+    if (dupe) return dupe;
+    const entry: WatchlistItem = {
+      ...item,
+      added_at: new Date().toISOString(),
+      local_poster_uri: localUri,
+    };
+    await saveWatchlist([...list, entry]);
+    return entry;
+  });
 }
 
-export async function removeFromWatchlist(id: number, mediaType: string): Promise<void> {
-  const list = await getWatchlist();
-  const key = makeKey(id, mediaType);
-  const item = list.find(i => makeKey(i.id, i.media_type) === key);
-
-  if (item?.local_poster_uri) {
+export function removeFromWatchlist(id: number, mediaType: string): Promise<void> {
+  return serialize(async () => {
+    const list = await getWatchlist();
+    const key = makeKey(id, mediaType);
+    const item = list.find(i => makeKey(i.id, i.media_type) === key);
+    if (!item) return;
+    await saveWatchlist(list.filter(i => makeKey(i.id, i.media_type) !== key));
+    // Delete the file after the list is saved, so a failed save never leaves an item with a missing poster.
     await deletePoster(item.local_poster_uri);
-  }
-
-  const filtered = list.filter(i => makeKey(i.id, i.media_type) !== key);
-  await saveWatchlist(filtered);
+  });
 }
 
 export async function isInWatchlist(id: number, mediaType: string): Promise<boolean> {
@@ -156,21 +167,23 @@ export function getWatchlistStats(items: WatchlistItem[]) {
   return { total, movies, series, hours };
 }
 
-export async function updateWatchlistItem(
+export function updateWatchlistItem(
   id: number,
   mediaType: string,
   updates: { priority?: WatchlistPriority; why_added?: string },
 ): Promise<void> {
-  const list = await getWatchlist();
-  const key = makeKey(id, mediaType);
-  const idx = list.findIndex(i => makeKey(i.id, i.media_type) === key);
-  if (idx === -1) return;
-  const next = { ...list[idx] };
-  if (updates.priority !== undefined) next.priority = updates.priority;
-  if (updates.why_added !== undefined) {
-    const note = updates.why_added.trim();
-    if (note) next.why_added = note; else delete next.why_added;
-  }
-  list[idx] = next;
-  await saveWatchlist(list);
+  return serialize(async () => {
+    const list = await getWatchlist();
+    const key = makeKey(id, mediaType);
+    const idx = list.findIndex(i => makeKey(i.id, i.media_type) === key);
+    if (idx === -1) return;
+    const next = { ...list[idx] };
+    if (updates.priority !== undefined) next.priority = updates.priority;
+    if (updates.why_added !== undefined) {
+      const note = updates.why_added.trim();
+      if (note) next.why_added = note; else delete next.why_added;
+    }
+    list[idx] = next;
+    await saveWatchlist(list);
+  });
 }

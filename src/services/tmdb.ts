@@ -7,6 +7,7 @@ export const REGION = 'IN';
 export const LANGUAGE = 'en-US';
 
 const BASE = 'https://api.themoviedb.org/3';
+const TIMEOUT_MS = 15000;
 
 export type ImageSize = 'w92' | 'w185' | 'w342' | 'w500' | 'w780' | 'original';
 
@@ -36,12 +37,32 @@ export async function tmdbGet<T = any>(
     if (v !== undefined && v !== '') qs.set(k, String(v));
   }
 
-  const res = await fetch(`${BASE}/${path.replace(/^\//, '')}?${qs}`, { signal: init?.signal });
-  const json = await res.json().catch(() => null);
-  if (!res.ok || !json || json.success === false) {
-    throw new TmdbError(res.status, json?.status_message || `TMDb request failed (${res.status})`);
+  const url = `${BASE}/${path.replace(/^\//, '')}?${qs}`;
+  // Never hang forever (a stuck request would keep screens in "loading"), and
+  // retry once on a rate limit (429) honouring Retry-After.
+  for (let attempt = 0; ; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    const onAbort = () => ctrl.abort();
+    init?.signal?.addEventListener('abort', onAbort);
+    if (init?.signal?.aborted) ctrl.abort();
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (res.status === 429 && attempt === 0) {
+        const wait = Math.min(Number(res.headers.get('retry-after')) || 1, 5);
+        await new Promise(r => setTimeout(r, wait * 1000));
+        continue;
+      }
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json || json.success === false) {
+        throw new TmdbError(res.status, json?.status_message || `TMDb request failed (${res.status})`);
+      }
+      return json as T;
+    } finally {
+      clearTimeout(timer);
+      init?.signal?.removeEventListener('abort', onAbort);
+    }
   }
-  return json as T;
 }
 
 // ── Release dates (movies) ────────────────────────────
@@ -63,7 +84,7 @@ export async function getMovieReleaseDates(movieId: number, region = REGION): Pr
   const json = await tmdbGet<{ results: { iso_3166_1: string; release_dates: RegionRelease[] }[] }>(
     `movie/${movieId}/release_dates`,
   );
-  return json.results.find(r => r.iso_3166_1 === region)?.release_dates ?? [];
+  return (json.results ?? []).find(r => r.iso_3166_1 === region)?.release_dates ?? [];
 }
 
 // ── Watch providers ───────────────────────────────────

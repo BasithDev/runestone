@@ -20,8 +20,17 @@ export function subscribeUpcoming(listener: Listener): () => void {
 export async function getUpcomingItems(): Promise<UpcomingItem[]> {
   try {
     const raw = await AsyncStorage.getItem(UPCOMING_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
   } catch { return []; }
+}
+
+// Serialised read-modify-write so quick add/remove taps can't lose updates.
+let writeQueue: Promise<unknown> = Promise.resolve();
+function serialize<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(fn);
+  writeQueue = run.catch(() => undefined);
+  return run;
 }
 
 async function saveUpcomingItems(items: UpcomingItem[]) {
@@ -29,32 +38,37 @@ async function saveUpcomingItems(items: UpcomingItem[]) {
   listeners.forEach(l => l(items));
 }
 
-export async function addUpcomingItem(item: Omit<UpcomingItem, 'addedAt'>): Promise<UpcomingItem> {
-  const list = await getUpcomingItems();
-  const key = titleKey(item.mediaType, item.tmdbId);
-  const existing = list.find(i => titleKey(i.mediaType, i.tmdbId) === key);
-  if (existing) return existing;
+export function addUpcomingItem(item: Omit<UpcomingItem, 'addedAt'>): Promise<UpcomingItem> {
+  return serialize(async () => {
+    const list = await getUpcomingItems();
+    const key = titleKey(item.mediaType, item.tmdbId);
+    const existing = list.find(i => titleKey(i.mediaType, i.tmdbId) === key);
+    if (existing) return existing;
 
-  const entry: UpcomingItem = { ...item, addedAt: new Date().toISOString() };
-  list.push(entry);
-  await saveUpcomingItems(list);
-  return entry;
+    const entry: UpcomingItem = { ...item, addedAt: new Date().toISOString() };
+    await saveUpcomingItems([...list, entry]);
+    return entry;
+  });
 }
 
-export async function updateUpcomingItem(
+export function updateUpcomingItem(
   mediaType: string, tmdbId: number,
   updates: Partial<Pick<UpcomingItem, 'releaseDate' | 'title' | 'posterPath'>>,
 ): Promise<void> {
-  const list = await getUpcomingItems();
-  const idx = list.findIndex(i => i.mediaType === mediaType && i.tmdbId === tmdbId);
-  if (idx === -1) return;
-  list[idx] = { ...list[idx], ...updates };
-  await saveUpcomingItems(list);
+  return serialize(async () => {
+    const list = await getUpcomingItems();
+    const idx = list.findIndex(i => i.mediaType === mediaType && i.tmdbId === tmdbId);
+    if (idx === -1) return;
+    list[idx] = { ...list[idx], ...updates };
+    await saveUpcomingItems(list);
+  });
 }
 
-export async function removeUpcomingItem(mediaType: string, tmdbId: number): Promise<void> {
-  const list = await getUpcomingItems();
-  await saveUpcomingItems(list.filter(i => !(i.mediaType === mediaType && i.tmdbId === tmdbId)));
+export function removeUpcomingItem(mediaType: string, tmdbId: number): Promise<void> {
+  return serialize(async () => {
+    const list = await getUpcomingItems();
+    await saveUpcomingItems(list.filter(i => !(i.mediaType === mediaType && i.tmdbId === tmdbId)));
+  });
 }
 
 // ── India release date resolution ─────────────────────

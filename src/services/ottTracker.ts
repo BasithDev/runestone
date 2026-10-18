@@ -108,7 +108,19 @@ async function emit(t: TrackedTitle, kind: OttEventKind, message: string, notify
   if (notify) await notifyNow(t.title, message, { tmdbId: t.tmdbId, mediaType: t.mediaType, screen: 'alerts' });
 }
 
-export async function checkTitle(t: TrackedTitle, opts: { force?: boolean } = {}): Promise<OttTitleState> {
+// One check per title at a time: a refresh and a details-screen lookup racing
+// would both see "no previous state" / the same diff and alert twice.
+const checking = new Map<string, Promise<OttTitleState>>();
+
+export function checkTitle(t: TrackedTitle, opts: { force?: boolean } = {}): Promise<OttTitleState> {
+  const running = checking.get(t.key);
+  if (running) return running;
+  const p = doCheckTitle(t, opts).finally(() => { checking.delete(t.key); });
+  checking.set(t.key, p);
+  return p;
+}
+
+async function doCheckTitle(t: TrackedTitle, opts: { force?: boolean }): Promise<OttTitleState> {
   const prev = await getTitleState(t.key);
   if (prev && !opts.force && Date.now() - new Date(prev.checkedAt).getTime() < FRESH_MS) return prev;
 
@@ -128,10 +140,15 @@ export async function checkTitle(t: TrackedTitle, opts: { force?: boolean } = {}
     nextAirDate: f.nextAirDate ?? null,
     digitalNotifId: prev?.digitalNotifId ?? null,
     digitalNotifDate: prev?.digitalNotifDate ?? null,
+    // Older saved states have no seen-list: start it from the last known providers.
+    seenProviders: [...new Set([...(prev?.seenProviders ?? prev?.providers ?? []), ...f.providers])],
+    lastDigitalAlert: prev?.lastDigitalAlert ?? (prev?.digitalDate ?? null),
+    lastSeasonAlert: prev?.lastSeasonAlert ?? null,
   };
 
   // Digital date
-  if (f.digitalDate && f.digitalDate !== prev?.digitalDate) {
+  if (f.digitalDate && f.digitalDate !== prev?.digitalDate && f.digitalDate !== next.lastDigitalAlert) {
+    next.lastDigitalAlert = f.digitalDate;
     if (!baseline || f.digitalDate >= today) {
       await emit(t, 'ott_date', `OTT release in India on ${formatOttDate(f.digitalDate)}`, !baseline);
     }
@@ -139,7 +156,9 @@ export async function checkTitle(t: TrackedTitle, opts: { force?: boolean } = {}
 
   // Providers
   if (!baseline) {
-    const added = f.providers.filter(p => !prev!.providers.includes(p));
+    // Only providers never seen before; one that flickered out of TMDb and back is not "new".
+    const seen = prev!.seenProviders ?? prev!.providers;
+    const added = f.providers.filter(p => !seen.includes(p));
     if (added.length > 0) {
       next.arrivedAt = prev!.arrivedAt ?? now;
       await emit(t, 'ott_arrived', `Now streaming in India on ${added.join(', ')}`, true);
@@ -151,7 +170,10 @@ export async function checkTitle(t: TrackedTitle, opts: { force?: boolean } = {}
     if ((f.knownSeasons ?? 0) > (prev!.knownSeasons ?? 0)) {
       await emit(t, 'new_season', `Season ${f.knownSeasons} announced`, true);
     }
-    if (f.nextAirDate && (f.nextAirDate !== prev!.nextAirDate || f.nextSeason !== prev!.nextSeason)) {
+    const seasonKey = `${f.nextSeason}|${f.nextAirDate}`;
+    if (f.nextAirDate && seasonKey !== next.lastSeasonAlert
+      && (f.nextAirDate !== prev!.nextAirDate || f.nextSeason !== prev!.nextSeason)) {
+      next.lastSeasonAlert = seasonKey;
       await emit(t, 'season_date', `Season ${f.nextSeason} premieres ${formatOttDate(f.nextAirDate)}`, true);
     }
   }
@@ -178,10 +200,17 @@ export async function checkTitle(t: TrackedTitle, opts: { force?: boolean } = {}
 
 // ── Refresh all ───────────────────────────────────────
 let inFlight: Promise<void> | null = null;
+let inFlightForced = false;
 
 /** Checks every tracked title (skipping ones checked < 12 h ago unless forced). */
 export function refreshAll(opts: { force?: boolean } = {}): Promise<void> {
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    // A forced refresh (e.g. after a restore) must not be swallowed by a
+    // normal run that started earlier on older data: run again after it.
+    if (opts.force && !inFlightForced) return inFlight.catch(() => {}).then(() => refreshAll(opts));
+    return inFlight;
+  }
+  inFlightForced = !!opts.force;
   inFlight = (async () => {
     const tracked = await getTrackedTitles();
 
@@ -195,14 +224,16 @@ export function refreshAll(opts: { force?: boolean } = {}): Promise<void> {
     }
 
     const queue = [...tracked];
+    let ok = 0;
     const worker = async () => {
       for (let t = queue.shift(); t; t = queue.shift()) {
-        try { await checkTitle(t, opts); } catch { /* one failure must not stop the run */ }
+        try { await checkTitle(t, opts); ok++; } catch { /* one failure must not stop the run */ }
       }
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
-    await setLastFullRefresh(new Date().toISOString());
-  })().finally(() => { inFlight = null; });
+    // Offline / no API key: don't mark the run done, or nothing retries for 6 h.
+    if (ok > 0 || tracked.length === 0) await setLastFullRefresh(new Date().toISOString());
+  })().finally(() => { inFlight = null; inFlightForced = false; });
   return inFlight;
 }
 
@@ -214,6 +245,8 @@ export async function refreshIfStale(maxAgeMs = 6 * 60 * 60 * 1000): Promise<voi
 }
 
 // ── Single-title lookup (content screen) ──────────────
+const UNTRACKED_MS = 10 * 60 * 1000;
+const untracked = new Map<string, { at: number; p: Promise<OttInfo> }>();
 export async function getOttForTitle(tmdbId: number, mediaType: 'movie' | 'tv'): Promise<OttInfo> {
   const key = titleKey(mediaType, tmdbId);
   const cached = await getTitleState(key);
@@ -222,7 +255,12 @@ export async function getOttForTitle(tmdbId: number, mediaType: 'movie' | 'tv'):
     try { return await checkTitle({ key, tmdbId, mediaType, title: cached.title }, { force: true }); }
     catch { return cached; }
   }
-  // Untracked title: fetch without storing state or raising alerts.
-  const f = await fetchOtt({ tmdbId, mediaType });
-  return { digitalDate: f.digitalDate, providers: f.providers, checkedAt: new Date().toISOString() };
+  // Untracked title: fetch without storing state or raising alerts (cached briefly).
+  const hit = untracked.get(key);
+  if (hit && Date.now() - hit.at < UNTRACKED_MS) return hit.p;
+  const p = fetchOtt({ tmdbId, mediaType }).then(f => (
+    { digitalDate: f.digitalDate, providers: f.providers, checkedAt: new Date().toISOString() } as OttInfo));
+  untracked.set(key, { at: Date.now(), p });
+  p.catch(() => { if (untracked.get(key)?.p === p) untracked.delete(key); });
+  return p;
 }

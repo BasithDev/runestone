@@ -46,7 +46,7 @@ export function UpcomingProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       setItems(await getUpcomingItems());
-    } finally {
+    } catch { /* keep the current list */ } finally {
       setLoading(false);
     }
   }, []);

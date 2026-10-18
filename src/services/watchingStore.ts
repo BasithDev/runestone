@@ -26,7 +26,9 @@ export interface DirectorStat {
 // rapid taps can't read stale data and overwrite each other.
 let writeQueue: Promise<unknown> = Promise.resolve();
 function serialize<T>(fn: () => Promise<T>): Promise<T> {
-  const run = writeQueue.then(fn);
+  // The watch log must exist (backfilled from the data *before* this change)
+  // before anything is modified, or the first change would be counted twice.
+  const run = writeQueue.then(async () => { await readLog(); return fn(); });
   writeQueue = run.catch(() => undefined);
   return run;
 }
@@ -114,16 +116,25 @@ async function appendLog(entries: WatchLogEntry[]) {
 }
 
 /** Log entries for the change from `before` to `after` (episodes / movie completion). */
-function progressLog(before: WatchingItem, after: WatchingItem): WatchLogEntry[] {
+function progressLog(before: WatchingItem, after: WatchingItem, at?: string): WatchLogEntry[] {
   if (after.mediaType === 'movie') {
     const was = !!before.movieCompleted, now = !!after.movieCompleted;
     if (was === now) return [];
     const sign = now ? 1 : -1;
-    return [logEntry(after, sign, sign * movieMinutes(after))];
+    return [logEntry(after, sign, sign * movieMinutes(after), at)];
   }
   const delta = (after.episodesWatched ?? 0) - (before.episodesWatched ?? 0);
   if (delta === 0) return [];
-  return [logEntry(after, delta, delta * episodeMinutes(after))];
+  return [logEntry(after, delta, delta * episodeMinutes(after), at)];
+}
+
+/** Caught up = every aired episode watched; position moves to the last aired episode. */
+function caughtUpState(item: WatchingItem): WatchingItem {
+  const total = getTotalEpisodes(item);
+  if (item.mediaType === 'movie' || total <= 0) return { ...item, status: 'caught_up' };
+  const watched = Math.max(item.episodesWatched ?? 0, total);
+  const pos = positionFromWatched(item.seasonEpisodes ?? [], watched);
+  return { ...item, status: 'caught_up', episodesWatched: watched, currentSeason: pos.season, currentEpisode: pos.episode };
 }
 
 const same = (i: { tmdbId: number; mediaType: string }, tmdbId: number, mediaType: string) =>
@@ -297,6 +308,44 @@ export function patchWatchingItem(tmdbId: number, mediaType: string, patch: Watc
 }
 
 export const updateWatchingProgress = patchWatchingItem;
+
+/** Mark caught up: records every aired episode as watched (and logs them). */
+export function markWatchingCaughtUp(tmdbId: number, mediaType: string): Promise<void> {
+  return serialize(async () => {
+    const list = await readItems();
+    const idx = list.findIndex(i => same(i, tmdbId, mediaType));
+    if (idx === -1) return;
+    const before = list[idx];
+    list[idx] = { ...caughtUpState(before), lastWatched: new Date().toISOString() };
+    await writeItems(list);
+    await appendLog(progressLog(before, list[idx]));
+  });
+}
+
+/**
+ * One-off repair for shows marked caught up before progress was recorded
+ * with it. Logged at their last update so today's streak isn't inflated.
+ * Idempotent: does nothing once progress matches.
+ */
+export function repairCaughtUpProgress(): Promise<void> {
+  return serialize(async () => {
+    const list = await readItems();
+    const fixes: WatchLogEntry[] = [];
+    let changed = false;
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      if (item.status !== 'caught_up' || item.mediaType === 'movie') continue;
+      const next = caughtUpState(item);
+      if ((next.episodesWatched ?? 0) === (item.episodesWatched ?? 0)) continue;
+      list[i] = next;
+      fixes.push(...progressLog(item, next, item.lastWatched));
+      changed = true;
+    }
+    if (!changed) return;
+    await writeItems(list);
+    await appendLog(fixes);
+  });
+}
 
 export function updateWatchingStatus(tmdbId: number, mediaType: string, status: WatchingStatus): Promise<void> {
   return patchWatchingItem(tmdbId, mediaType, {

@@ -6,7 +6,7 @@ import {
 import {
   getWatchingItems, addWatchingItem, patchWatchingItem,
   updateWatchingStatus, removeWatchingItem,
-  getWatchHistory, getWatchLog, markAsCompleted,
+  getWatchHistory, getWatchLog, markAsCompleted, markWatchingCaughtUp, repairCaughtUpProgress,
   putOnHold, dropWatchingItem, resumeWatchingItem, advanceWatchingItem,
   computeLifetimeStats, computePeriodStats, computeGenreStats, computeDirectorStats,
   computeStreak, getAvailableYears,
@@ -63,6 +63,7 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
 
   // Load data on mount
   const loadData = useCallback(async () => {
+    await repairCaughtUpProgress();
     const [w, h, l] = await Promise.all([getWatchingItems(), getWatchHistory(), getWatchLog()]);
     setItems(w);
     setHistory(h);
@@ -105,7 +106,7 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
   }, [loadData]);
 
   const markCaughtUpCb = useCallback(async (tmdbId: number, mediaType: string) => {
-    await updateWatchingStatus(tmdbId, mediaType, 'caught_up');
+    await markWatchingCaughtUp(tmdbId, mediaType);
     await loadData();
   }, [loadData]);
 

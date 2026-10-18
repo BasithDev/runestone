@@ -45,6 +45,13 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
+          name="backup"
+          options={{
+            animation: 'slide_from_right',
+            gestureEnabled: true,
+          }}
+        />
+        <Stack.Screen
           name="alerts"
           options={{
             animation: 'slide_from_right',

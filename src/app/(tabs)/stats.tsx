@@ -4,6 +4,7 @@ import {
   Animated, Modal, FlatList,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useWatching } from '../../context/WatchingContext';
@@ -69,6 +70,7 @@ function GenreBar({ name, percentage, color, count }: { name: string; percentage
 
 export default function StatsScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const {
     lifetimeStats, currentStreak, longestStreak,
     availableYears, history,
@@ -122,8 +124,16 @@ export default function StatsScreen() {
       <Animated.View style={{ opacity: fadeIn, transform: [{ translateY: slideUp }] }}>
 
         {/* ── Header ──────────────────────────────────── */}
-        <View style={s.header}>
+        <View style={[s.header, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
           <Text style={s.headerTitle}>Stats</Text>
+          <Pressable
+            onPress={() => router.push('/backup' as any)}
+            hitSlop={8}
+            accessibilityLabel="Backup and restore"
+            style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.06)', justifyContent: 'center', alignItems: 'center' }}
+          >
+            <Ionicons name="cloud-upload-outline" size={18} color="#A1A1AA" />
+          </Pressable>
         </View>
 
         {isEmpty ? (

@@ -45,3 +45,6 @@ example
 
 # agent worktrees
 .claude/worktrees/
+
+# release APKs
+dist/

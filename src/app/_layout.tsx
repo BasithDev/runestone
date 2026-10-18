@@ -6,6 +6,7 @@ import { WatchingProvider } from '../context/WatchingContext';
 import { UpcomingProvider } from '../context/UpcomingContext';
 import { useAlertsBootstrap } from '../services/backgroundRefresh';
 import { useNotificationRouting } from '../services/notifications';
+import UpdatePrompt from '../components/UpdatePrompt';
 
 // Renders nothing; wires notifications, background refresh and tap routing.
 // (Notifications/background tasks need a development build, not Expo Go.)
@@ -22,6 +23,7 @@ export default function RootLayout() {
     <UpcomingProvider>
       <StatusBar style="light" />
       <AlertsBootstrap />
+      <UpdatePrompt />
       <Stack
         screenOptions={{
           headerShown: false,

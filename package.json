@@ -4,19 +4,16 @@
   "version": "1.0.0",
   "dependencies": {
     "@expo-google-fonts/pirata-one": "^0.4.1",
-    "@expo/ui": "~56.0.26",
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "babel-preset-expo": "^56.0.14",
     "expo": "~56.0.23",
     "expo-background-task": "~56.0.27",
+    "expo-build-properties": "~56.0.27",
     "expo-constants": "~56.0.16",
     "expo-dev-client": "~56.0.27",
-    "expo-device": "~56.0.4",
     "expo-document-picker": "~56.0.4",
     "expo-file-system": "~56.0.7",
     "expo-font": "~56.0.5",
-    "expo-glass-effect": "~56.0.4",
     "expo-image": "~56.0.13",
     "expo-linear-gradient": "~56.0.4",
     "expo-linking": "~56.0.18",
@@ -30,13 +27,11 @@
     "expo-task-manager": "~56.0.27",
     "expo-web-browser": "~56.0.6",
     "nativewind": "^4.2.4",
-    "prettier-plugin-tailwindcss": "^0.5.14",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.85.3",
     "react-native-gesture-handler": "~2.31.1",
     "react-native-reanimated": "^4.3.1",
-    "react-native-reanimated-carousel": "^4.0.3",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-web": "~0.21.0",
@@ -45,16 +40,18 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "babel-preset-expo": "~56.0.14",
+    "prettier-plugin-tailwindcss": "^0.5.14",
     "typescript": "~6.0.3"
   },
   "scripts": {
     "postinstall": "npx patch-package",
     "start": "expo start",
-    "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "release": "./scripts/release.sh"
   },
   "private": true
 }

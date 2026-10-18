@@ -6,151 +6,61 @@ import {
   TextInput,
   FlatList,
   ScrollView,
-  Image,
   Pressable,
   ActivityIndicator,
   StyleSheet,
-  Dimensions,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useWatchlist } from '../../context/WatchlistContext';
+import { useWatching } from '../../context/WatchingContext';
 import { tmdbGet } from '../../services/tmdb';
 import AddToWatchlistSheet from '../../components/lists/AddToWatchlistSheet';
 import { WatchlistPriority } from '../../services/watchlistStore';
 import YearPickerSheet from '../../components/YearPickerSheet';
-
-// ── Types ──────────────────────────────────────────────
-interface MediaItem {
-  id: number;
-  title?: string;
-  name?: string;
-  poster_path: string | null;
-  overview: string;
-  vote_average: number;
-  vote_count?: number;
-  release_date?: string;
-  first_air_date?: string;
-  media_type?: string;
-  genre_ids?: number[];
-  // Person-specific
-  profile_path?: string | null;
-  known_for_department?: string;
-  known_for?: MediaItem[];
-}
+import QuickTrackSheet, { QuickTrackTarget } from '../../components/tracking/QuickTrackSheet';
+import ResultCard from '../../components/search/ResultCard';
+import SearchHistory from '../../components/search/SearchHistory';
+import FiltersSheet from '../../components/search/FiltersSheet';
+import ActiveFilterChips from '../../components/search/ActiveFilterChips';
+import Snackbar from '../../components/search/Snackbar';
+import TrendingRow from '../../components/search/TrendingRow';
+import StateView from '../../components/search/StateView';
+import { useSearchHistory, RecentTitle } from '../../components/search/useSearchHistory';
+import { useGenres } from '../../components/search/useGenres';
+import {
+  MediaItem,
+  SearchFilters,
+  DEFAULT_FILTERS,
+  applyClientFilters,
+  countActiveFilters,
+  itemDate,
+  mediaTypeOf,
+  sortItems,
+} from '../../components/search/types';
 
 // ── Constants ──────────────────────────────────────────
-const TMDB_IMG = 'https://image.tmdb.org/t/p/w342';
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const POSTER_W = 100;
-const POSTER_H = 150;
-
 const CHIPS = ['All', 'Movies', 'Series', 'Anime', 'Others'] as const;
 type ChipType = (typeof CHIPS)[number];
 
-// Map chips to TMDB media_type filter
-const chipToMediaType: Record<ChipType, string | null> = {
-  All: null,
-  Movies: 'movie',
-  Series: 'tv',
-  Anime: 'tv', // filtered by genre later
-  Others: null,
-};
-
-// Drop items without posters; Anime = TV results with the Animation genre (16).
+// Drop items without posters (and people); Anime = TV results with the Animation genre (16).
 function applyChipFilter(items: MediaItem[], chip: ChipType): MediaItem[] {
-  let out = items.filter(i => i.poster_path);
+  let out = items.filter(i => i.poster_path && i.media_type !== 'person');
   if (chip === 'Anime') out = out.filter(i => i.genre_ids?.includes(16));
   return out;
 }
 
-/** Release year of a movie/tv item ('' when unknown). */
-function itemYear(i: MediaItem): string {
-  return (i.release_date || i.first_air_date || '').slice(0, 4);
-}
-
-/** Client-side year filter (multi search, filmographies, trending). */
+/** Client-side year filter (multi search, filmographies). */
 function applyYearFilter(items: MediaItem[], year: number | null): MediaItem[] {
   if (year == null) return items;
   const y = String(year);
-  return items.filter(i => itemYear(i) === y);
+  return items.filter(i => itemDate(i).slice(0, 4) === y);
 }
 
-// ── Result row component ─────────────────────────────
-function ResultRow({ item, isSaved, onToggleSave }: {
-  item: MediaItem;
-  isSaved: boolean;
-  onToggleSave: (item: MediaItem) => void;
-}) {
-  const router = useRouter();
-  const title = item.title || item.name || 'Untitled';
-  const hasRating = item.vote_average > 0;
-  const rating = hasRating ? item.vote_average.toFixed(1) : null;
-  const voteCount = item.vote_count ?? 0;
-  const plot = item.overview || 'No description available.';
-  const mediaType = item.media_type || (item.title ? 'movie' : 'tv');
+const keyOfResult = (item: MediaItem) => `${mediaTypeOf(item)}-${item.id}`;
 
-  // Format vote count: 1200 → 1.2k
-  const formatVotes = (n: number) => {
-    if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
-    return String(n);
-  };
-
-  return (
-    <Pressable
-      style={styles.resultRow}
-      onPress={() => router.push({ pathname: '/content/[id]', params: { id: item.id, media_type: mediaType } } as any)}
-    >
-      {/* Poster */}
-      <View style={styles.posterContainer}>
-        <Image
-          source={{ uri: `${TMDB_IMG}${item.poster_path}` }}
-          style={styles.poster}
-          resizeMode="cover"
-        />
-      </View>
-
-      {/* Info */}
-      <View style={styles.infoContainer}>
-        <Text style={styles.resultTitle} numberOfLines={2}>{title}</Text>
-        <Text style={styles.resultPlot} numberOfLines={5}>{plot}</Text>
-        <View style={styles.ratingRow}>
-          {hasRating ? (
-            <>
-              <View style={styles.ratingBadge}>
-                <Ionicons name="star" size={10} color="#10B981" />
-                <Text style={styles.ratingText}>{rating}</Text>
-              </View>
-              {voteCount > 0 && (
-                <Text style={styles.dateText}>({formatVotes(voteCount)})</Text>
-              )}
-            </>
-          ) : (
-            <Text style={styles.noRatingText}>No ratings</Text>
-          )}
-          {item.release_date || item.first_air_date ? (
-            <Text style={styles.dateText}>
-              {(item.release_date || item.first_air_date || '').slice(0, 4)}
-            </Text>
-          ) : null}
-        </View>
-      </View>
-
-      {/* Save button */}
-      <Pressable
-        style={[styles.saveButton, isSaved && styles.saveButtonActive]}
-        onPress={(e) => { e.stopPropagation(); onToggleSave(item); }}
-      >
-        <Ionicons
-          name={isSaved ? 'bookmark' : 'bookmark-outline'}
-          size={18}
-          color={isSaved ? '#10B981' : '#71717A'}
-        />
-      </Pressable>
-    </Pressable>
-  );
-}
+type PagedResponse = { results?: MediaItem[]; total_pages?: number };
 
 export default function SearchScreen() {
   const insets = useSafeAreaInsets();
@@ -164,46 +74,64 @@ export default function SearchScreen() {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState(false);
   const [trending, setTrending] = useState<MediaItem[]>([]);
   const [loadingTrending, setLoadingTrending] = useState(false);
+  const [trendingError, setTrendingError] = useState(false);
   const [browseMode, setBrowseMode] = useState<'search' | 'person' | 'company'>('search');
   const [year, setYear] = useState<number | null>(null);
   const [yearPickerOpen, setYearPickerOpen] = useState(false);
-  const yearRef = useRef<number | null>(null); // read by fetchers without re-creating them
+  const [filters, setFilters] = useState<SearchFilters>(DEFAULT_FILTERS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [companyId, setCompanyId] = useState<string | null>(null);
+  const [quickTarget, setQuickTarget] = useState<QuickTrackTarget | null>(null);
+  const [snack, setSnack] = useState<{ message: string; nonce: number } | null>(null);
 
+  // Read by fetchers without re-creating them
+  const yearRef = useRef<number | null>(null);
+  const filtersRef = useRef<SearchFilters>(DEFAULT_FILTERS);
+  const personIdRef = useRef<string | null>(null);
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inputRef = useRef<TextInput>(null);
   const trendingReq = useRef(0);
   const requestId = useRef(0);          // bumped per new request; stale responses are dropped
+  const loadMoreFailed = useRef(false); // stops auto-paging after a failed page
   const lastParamsKey = useRef('');
-  const [companyId, setCompanyId] = useState<string | null>(null);
 
   const { isInWatchlist, addItem, removeItem } = useWatchlist();
+  const { getItem, getHistoryEntries } = useWatching();
+  const { history, recentTitles, addQuery, removeQuery, clearHistory, addTitle } = useSearchHistory();
+  const { genres, loading: genresLoading, error: genresError, reload: reloadGenres } = useGenres();
+  const genresRef = useRef(genres);
+  genresRef.current = genres;
 
   // Modal state for watchlist confirmation
   const [modalItem, setModalItem] = useState<MediaItem | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
 
-  // ── Fetch Trending (fallback) ────────────────────────
+  const activeCount = countActiveFilters(filters, year);
+  const isBrowse = browseMode === 'search' && !query.trim() && activeCount > 0;
+  const showList = !!query.trim() || isBrowse;
+
+  const beginRequest = useCallback(() => {
+    loadMoreFailed.current = false;
+    setError(false);
+    return ++requestId.current;
+  }, []);
+
+  // ── Fetch Trending ───────────────────────────────────
   const fetchTrending = useCallback(async (chip: ChipType) => {
     const reqId = ++trendingReq.current;
     setLoadingTrending(true);
+    setTrendingError(false);
     try {
-      let endpoint = 'trending/all/day';
-      if (chip === 'Movies') {
-        endpoint = 'trending/movie/day';
-      } else if (chip === 'Series' || chip === 'Anime') {
-        endpoint = 'trending/tv/day';
-      }
-
+      const endpoint = chip === 'Movies' ? 'trending/movie/day'
+        : chip === 'Series' || chip === 'Anime' ? 'trending/tv/day'
+        : 'trending/all/day';
       const json = await tmdbGet<{ results?: MediaItem[] }>(endpoint);
       if (reqId !== trendingReq.current) return;
-
-      if (json.results) {
-        setTrending(applyChipFilter(json.results, chip).slice(0, 10));
-      }
+      setTrending(applyChipFilter(json.results ?? [], chip).slice(0, 10));
     } catch {
-      // silently fail
+      if (reqId === trendingReq.current) setTrendingError(true);
     } finally {
       if (reqId === trendingReq.current) setLoadingTrending(false);
     }
@@ -211,40 +139,37 @@ export default function SearchScreen() {
 
   // Fetch trending on mount or when chip changes if query is empty
   useEffect(() => {
-    if (!query.trim()) {
-      fetchTrending(activeChip);
-    }
+    if (!query.trim()) fetchTrending(activeChip);
   }, [activeChip, query, fetchTrending]);
 
   // ── Fetch person filmography ─────────────────────────
   const fetchPersonCredits = useCallback(async (personId: string) => {
-    const reqId = ++requestId.current;
+    const reqId = beginRequest();
     setLoading(true);
     try {
       const json = await tmdbGet<{ cast?: any[] }>(`person/${personId}/combined_credits`);
       if (reqId !== requestId.current) return;
-      if (json.cast) {
-        const seen = new Set<number>();
-        const items = json.cast
-          .filter((i: any) => {
-            if (!i.poster_path || (i.media_type !== 'movie' && i.media_type !== 'tv')) return false;
-            if (seen.has(i.id)) return false;
-            seen.add(i.id);
-            return true;
-          })
-          .sort((a: any, b: any) => (b.vote_count || 0) - (a.vote_count || 0));
-        setResults(items);
-        setPage(1);
-        setTotalPages(1);
-      }
-    } catch { /* silently fail */ }
-    finally { if (reqId === requestId.current) setLoading(false); }
-  }, []);
+      const seen = new Set<number>();
+      const items = (json.cast ?? [])
+        .filter((i: any) => {
+          if (!i.poster_path || (i.media_type !== 'movie' && i.media_type !== 'tv')) return false;
+          if (seen.has(i.id)) return false;
+          seen.add(i.id);
+          return true;
+        })
+        .sort((a: any, b: any) => (b.vote_count || 0) - (a.vote_count || 0));
+      setResults(items);
+      setPage(1);
+      setTotalPages(1);
+    } catch {
+      if (reqId === requestId.current) { setResults([]); setError(true); }
+    } finally { if (reqId === requestId.current) setLoading(false); }
+  }, [beginRequest]);
 
   // ── Company movies (paged discover) ──────────────────
   const discoverCompany = useCallback(
     (cid: string, pageNum: number) =>
-      tmdbGet<{ results?: MediaItem[]; total_pages?: number }>('discover/movie', {
+      tmdbGet<PagedResponse>('discover/movie', {
         with_companies: cid, sort_by: 'popularity.desc', page: pageNum,
         primary_release_year: yearRef.current ?? undefined,
       }),
@@ -252,19 +177,66 @@ export default function SearchScreen() {
   );
 
   const fetchCompanyMovies = useCallback(async (cid: string) => {
-    const reqId = ++requestId.current;
+    const reqId = beginRequest();
     setLoading(true);
     try {
       const json = await discoverCompany(cid, 1);
       if (reqId !== requestId.current) return;
-      if (json.results) {
-        setResults(json.results.filter(i => i.poster_path).map(i => ({ ...i, media_type: 'movie' })));
-        setTotalPages(json.total_pages || 1);
-        setPage(1);
-      }
-    } catch { /* silently fail */ }
-    finally { if (reqId === requestId.current) setLoading(false); }
-  }, [discoverCompany]);
+      setResults((json.results ?? []).filter(i => i.poster_path).map(i => ({ ...i, media_type: 'movie' })));
+      setTotalPages(json.total_pages || 1);
+      setPage(1);
+    } catch {
+      if (reqId === requestId.current) { setResults([]); setError(true); }
+    } finally { if (reqId === requestId.current) setLoading(false); }
+  }, [discoverCompany, beginRequest]);
+
+  // ── Browse (empty query + filters) via discover ──────
+  const fetchBrowse = useCallback(async (chip: ChipType, pageNum: number) => {
+    const f = filtersRef.current;
+    const yr = yearRef.current ?? undefined;
+    const types: ('movie' | 'tv')[] = chip === 'Movies' ? ['movie']
+      : chip === 'Series' || chip === 'Anime' ? ['tv']
+      : ['movie', 'tv'];
+    const today = new Date().toISOString().slice(0, 10);
+
+    const calls = types.map(async (t) => {
+      // Genre ids differ between movie and tv lists; keep the ones valid for this type.
+      const valid = f.genres.filter(id => {
+        const g = genresRef.current.find(x => x.id === id);
+        return !g || g[t];
+      });
+      if (f.genres.length && valid.length === 0) return null;
+
+      let withGenres: string | undefined;
+      if (chip === 'Anime') withGenres = [16, ...valid.filter(id => id !== 16)].join(',');
+      else if (valid.length) withGenres = valid.join('|'); // any of the selected genres
+
+      const newest = f.sort === 'newest';
+      const dateKey = t === 'movie' ? 'primary_release_date' : 'first_air_date';
+      const json = await tmdbGet<PagedResponse>(`discover/${t}`, {
+        with_genres: withGenres,
+        with_original_language: f.language ?? undefined,
+        'vote_average.gte': f.minRating ?? undefined,
+        'vote_count.gte': f.minRating || f.sort === 'rating' ? 50 : undefined,
+        sort_by: f.sort === 'rating' ? 'vote_average.desc' : newest ? `${dateKey}.desc` : 'popularity.desc',
+        ...(newest ? { [`${dateKey}.lte`]: today } : {}),
+        ...(t === 'movie' ? { primary_release_year: yr } : { first_air_date_year: yr }),
+        page: pageNum,
+      });
+      return { t, json };
+    });
+
+    const settled = await Promise.all(calls);
+    let items: MediaItem[] = [];
+    let total = 1;
+    for (const r of settled) {
+      if (!r) continue;
+      total = Math.max(total, r.json.total_pages || 1);
+      items = items.concat((r.json.results ?? []).filter(i => i.poster_path).map(i => ({ ...i, media_type: r.t })));
+    }
+    // Interleave movie + tv by the chosen sort (popularity by default).
+    return { items: sortItems(items, f.sort === 'relevance' ? 'popularity' : f.sort), totalPages: total };
+  }, []);
 
   // ── Search TMDb ──────────────────────────────────────
   const searchTMDb = useCallback((searchQuery: string, pageNum: number, chip: ChipType) => {
@@ -274,7 +246,7 @@ export default function SearchScreen() {
     // search/movie and search/tv filter by year server-side; search/multi can't,
     // so those results are filtered on the device (applyYearFilter).
     const yr = yearRef.current ?? undefined;
-    return tmdbGet<{ results?: MediaItem[]; total_pages?: number }>(path, {
+    return tmdbGet<PagedResponse>(path, {
       query: searchQuery,
       page: pageNum,
       ...(path === 'search/movie' ? { primary_release_year: yr } : {}),
@@ -282,10 +254,12 @@ export default function SearchScreen() {
     });
   }, []);
 
-  // ── Execute search (debounced) ───────────────────────
+  // ── Execute search (debounced) / browse ──────────────
   const executeSearch = useCallback(async (searchQuery: string, chip: ChipType) => {
-    const reqId = ++requestId.current;
-    if (!searchQuery.trim()) {
+    const reqId = beginRequest();
+    const browsing = !searchQuery.trim();
+
+    if (browsing && countActiveFilters(filtersRef.current, yearRef.current) === 0) {
       setResults([]);
       setPage(1);
       setTotalPages(1);
@@ -295,19 +269,27 @@ export default function SearchScreen() {
 
     setLoading(true);
     try {
-      const json = await searchTMDb(searchQuery, 1, chip);
-      if (reqId !== requestId.current) return;
-      if (json?.results) {
-        setResults(applyChipFilter(json.results, chip));
-        setTotalPages(json.total_pages || 1);
+      if (browsing) {
+        const { items, totalPages: tp } = await fetchBrowse(chip, 1);
+        if (reqId !== requestId.current) return;
+        setResults(items);
+        setTotalPages(tp);
         setPage(1);
+      } else {
+        const json = await searchTMDb(searchQuery, 1, chip);
+        if (reqId !== requestId.current) return;
+        const items = applyChipFilter(json?.results ?? [], chip);
+        setResults(items);
+        setTotalPages(json?.total_pages || 1);
+        setPage(1);
+        if (items.length > 0) addQuery(searchQuery);
       }
     } catch {
-      // silently fail
+      if (reqId === requestId.current) { setResults([]); setError(true); }
     } finally {
       if (reqId === requestId.current) setLoading(false);
     }
-  }, [searchTMDb]);
+  }, [searchTMDb, fetchBrowse, beginRequest, addQuery]);
 
   // Handle query from params (e.g. from content details). The tab stays mounted,
   // so react to every change in param values rather than only the first.
@@ -320,6 +302,7 @@ export default function SearchScreen() {
     if (params.person_id) {
       setBrowseMode('person');
       setCompanyId(null);
+      personIdRef.current = params.person_id;
       setQuery(params.person_name || 'Actor');
       fetchPersonCredits(params.person_id);
     } else if (params.company_id) {
@@ -336,7 +319,7 @@ export default function SearchScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.person_id, params.company_id, params.q, params.person_name, params.company_name]);
 
-  // ── Debounced input handler ──────────────────────────
+  // ── Input handlers ───────────────────────────────────
   const onChangeText = useCallback((text: string) => {
     setQuery(text);
     setBrowseMode('search'); // typing resets to normal search
@@ -347,58 +330,151 @@ export default function SearchScreen() {
     }, 500);
   }, [activeChip, executeSearch]);
 
-  // ── Chip press ───────────────────────────────────────
+  const onSubmit = useCallback(() => {
+    if (!query.trim() || browseMode !== 'search') return;
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    addQuery(query);
+    executeSearch(query, activeChip);
+  }, [query, browseMode, activeChip, addQuery, executeSearch]);
+
+  const onClear = useCallback(() => {
+    lastParamsKey.current = '';
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    setQuery('');
+    setResults([]);
+    setBrowseMode('search');
+    setCompanyId(null);
+    executeSearch('', activeChip); // bumps the request id; re-browses if filters are active
+  }, [activeChip, executeSearch]);
+
+  const onSelectHistory = useCallback((q: string) => {
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    lastParamsKey.current = '';
+    Keyboard.dismiss();
+    setQuery(q);
+    setBrowseMode('search');
+    setCompanyId(null);
+    addQuery(q);
+    executeSearch(q, activeChip);
+  }, [activeChip, addQuery, executeSearch]);
+
   const onChipPress = useCallback((chip: ChipType) => {
     setActiveChip(chip);
-    if (query.trim() && browseMode === 'search') {
-      executeSearch(query, chip);
-    }
+    if (browseMode === 'search') executeSearch(query, chip);
   }, [query, browseMode, executeSearch]);
 
-  // ── Year filter ──────────────────────────────────────
-  const onYearChange = useCallback((y: number | null) => {
+  // ── Filters / year ───────────────────────────────────
+  const applyFilters = useCallback((f: SearchFilters, y: number | null) => {
+    const yearChanged = y !== yearRef.current;
+    filtersRef.current = f;
     yearRef.current = y;
+    setFilters(f);
     setYear(y);
-    if (browseMode === 'company' && companyId) fetchCompanyMovies(companyId);
-    else if (browseMode === 'search' && query.trim()) executeSearch(query, activeChip);
+    if (browseMode === 'search') executeSearch(query, activeChip);
+    else if (browseMode === 'company' && companyId && yearChanged) fetchCompanyMovies(companyId);
     // person mode: credits are already loaded; filtered on render
   }, [browseMode, companyId, query, activeChip, fetchCompanyMovies, executeSearch]);
 
-  const visibleResults = useMemo(() => applyYearFilter(results, year), [results, year]);
-  const visibleTrending = useMemo(() => applyYearFilter(trending, year), [trending, year]);
+  const onYearChange = useCallback((y: number | null) => {
+    applyFilters(filtersRef.current, y);
+  }, [applyFilters]);
+
+  const onFiltersChange = useCallback((f: SearchFilters) => {
+    applyFilters(f, yearRef.current);
+  }, [applyFilters]);
+
+  const onClearYear = useCallback(() => applyFilters(filtersRef.current, null), [applyFilters]);
+  const onClearAllFilters = useCallback(() => applyFilters(DEFAULT_FILTERS, null), [applyFilters]);
+
+  // Browse results are filtered by TMDb; everything else is filtered on the device.
+  const visibleResults = useMemo(() => {
+    const byYear = applyYearFilter(results, year);
+    return isBrowse ? byYear : applyClientFilters(byYear, filters);
+  }, [results, year, filters, isBrowse]);
 
   // ── Load more (infinite scroll) ──────────────────────
   const loadMore = useCallback(async () => {
-    if (loadingMore || loading || page >= totalPages || !query.trim() || browseMode === 'person') return;
+    if (loadingMore || loading || page >= totalPages || !showList || browseMode === 'person') return;
     if (browseMode === 'company' && !companyId) return;
 
     const reqId = requestId.current; // a newer search invalidates this page
     setLoadingMore(true);
     try {
       const nextPage = page + 1;
-      const json = browseMode === 'company'
-        ? await discoverCompany(companyId!, nextPage)
-        : await searchTMDb(query, nextPage, activeChip);
-      if (reqId !== requestId.current) return;
-      if (json?.results) {
-        let filtered = applyChipFilter(json.results, browseMode === 'company' ? 'All' : activeChip);
-        if (browseMode === 'company') filtered = filtered.map(i => ({ ...i, media_type: 'movie' }));
-        setResults((prev) => {
-          const seen = new Set(prev.map(i => `${i.media_type}-${i.id}`));
-          return [...prev, ...filtered.filter(i => !seen.has(`${i.media_type}-${i.id}`))];
-        });
-        setPage(nextPage);
+      let incoming: MediaItem[];
+      if (browseMode === 'company') {
+        const json = await discoverCompany(companyId!, nextPage);
+        incoming = applyChipFilter(json.results ?? [], 'All').map(i => ({ ...i, media_type: 'movie' }));
+      } else if (isBrowse) {
+        incoming = (await fetchBrowse(activeChip, nextPage)).items;
+      } else {
+        const json = await searchTMDb(query, nextPage, activeChip);
+        incoming = applyChipFilter(json?.results ?? [], activeChip);
       }
+      if (reqId !== requestId.current) return;
+      setResults((prev) => {
+        const seen = new Set(prev.map(keyOfResult));
+        return [...prev, ...incoming.filter(i => !seen.has(keyOfResult(i)))];
+      });
+      setPage(nextPage);
     } catch {
-      // silently fail
+      loadMoreFailed.current = true;
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, loading, page, totalPages, query, activeChip, browseMode, companyId, searchTMDb, discoverCompany]);
+  }, [loadingMore, loading, page, totalPages, showList, query, activeChip, browseMode, companyId, isBrowse, searchTMDb, discoverCompany, fetchBrowse]);
+
+  // Device-side filters can leave a page nearly empty; keep paging a few pages.
+  useEffect(() => {
+    if (!showList || loading || loadingMore || loadMoreFailed.current || browseMode === 'person') return;
+    if (results.length > 0 && visibleResults.length < 6 && page < totalPages && page < 8) loadMore();
+  }, [showList, loading, loadingMore, browseMode, results.length, visibleResults.length, page, totalPages, loadMore]);
+
+  // ── Retry ────────────────────────────────────────────
+  const onRetry = useCallback(() => {
+    if (browseMode === 'person' && personIdRef.current) fetchPersonCredits(personIdRef.current);
+    else if (browseMode === 'company' && companyId) fetchCompanyMovies(companyId);
+    else executeSearch(query, activeChip);
+  }, [browseMode, companyId, query, activeChip, fetchPersonCredits, fetchCompanyMovies, executeSearch]);
+
+  const onRetryTrending = useCallback(() => fetchTrending(activeChip), [activeChip, fetchTrending]);
+
+  // ── Opening titles ───────────────────────────────────
+  const openTitle = useCallback((id: number, mediaType: string) => {
+    router.push({ pathname: '/content/[id]', params: { id, media_type: mediaType } } as any);
+  }, [router]);
+
+  const onOpenItem = useCallback((item: MediaItem) => {
+    const mt = mediaTypeOf(item);
+    addTitle({ id: item.id, media_type: mt, title: item.title || item.name || 'Untitled', poster_path: item.poster_path });
+    openTitle(item.id, mt);
+  }, [addTitle, openTitle]);
+
+  const onOpenRecent = useCallback((t: RecentTitle) => {
+    addTitle(t);
+    openTitle(t.id, t.media_type);
+  }, [addTitle, openTitle]);
+
+  // ── Quick track + snackbar ───────────────────────────
+  const onQuickTrack = useCallback((item: MediaItem) => {
+    setQuickTarget({
+      tmdbId: item.id,
+      mediaType: mediaTypeOf(item),
+      title: item.title || item.name || 'Untitled',
+      posterPath: item.poster_path,
+      releaseDate: itemDate(item) || null,
+    });
+  }, []);
+  const closeQuickTrack = useCallback(() => setQuickTarget(null), []);
+  const onQuickDone = useCallback((message: string) => {
+    setQuickTarget(null);
+    setSnack(prev => ({ message, nonce: (prev?.nonce ?? 0) + 1 }));
+  }, []);
+  const hideSnack = useCallback(() => setSnack(null), []);
 
   // ── Toggle watchlist ────────────────────────────────
   const handleToggleWatchlist = useCallback((item: MediaItem) => {
-    const mediaType = item.media_type || (item.title ? 'movie' : 'tv');
+    const mediaType = mediaTypeOf(item);
     if (isInWatchlist(item.id, mediaType)) {
       removeItem(item.id, mediaType);
     } else {
@@ -408,12 +484,12 @@ export default function SearchScreen() {
 
   const handleConfirmAdd = useCallback(async (priority: WatchlistPriority, whyAdded: string) => {
     if (!modalItem) return;
-    const mediaType = modalItem.media_type || (modalItem.title ? 'movie' : 'tv');
+    const mediaType = mediaTypeOf(modalItem);
 
     let runtime: number | null = null;
     let episodeCount: number | null = null;
     let episodeRuntime: number | null = null;
-    let genres: string[] = [];
+    let genreNames: string[] = [];
 
     // Fetch full details for runtime/episode data
     setModalLoading(true);
@@ -425,13 +501,13 @@ export default function SearchScreen() {
       episodeRuntime = json.episode_run_time?.[0]
         || json.last_episode_to_air?.runtime
         || null;
-      genres = (json.genres || []).map((g: any) => g.name);
+      genreNames = (json.genres || []).map((g: any) => g.name);
     } catch { /* use defaults */ }
 
     try {
       await addItem({
         id: modalItem.id,
-        media_type: mediaType as 'movie' | 'tv',
+        media_type: mediaType,
         title: modalItem.title || modalItem.name || '',
         poster_path: modalItem.poster_path,
         backdrop_path: null,
@@ -440,8 +516,8 @@ export default function SearchScreen() {
         runtime,
         episode_count: episodeCount,
         episode_runtime: episodeRuntime,
-        genres,
-        release_date: modalItem.release_date || modalItem.first_air_date || '',
+        genres: genreNames,
+        release_date: itemDate(modalItem),
         overview: modalItem.overview || '',
         priority,
         ...(whyAdded ? { why_added: whyAdded } : {}),
@@ -451,139 +527,102 @@ export default function SearchScreen() {
     }
     setModalItem(null);
   }, [modalItem, addItem]);
+  const cancelWatchlist = useCallback(() => setModalItem(null), []);
 
-  // ── Render Trending Section (Fallback) ───────────────
-  const renderTrendingSection = () => {
-    if (loadingTrending) {
-      return (
-        <View style={styles.loaderContainer}>
-          <ActivityIndicator size="large" color="#10B981" />
-        </View>
-      );
-    }
+  // ── List rendering ───────────────────────────────────
+  const listExtra = useMemo(
+    () => ({ getItem, getHistoryEntries, isInWatchlist }),
+    [getItem, getHistoryEntries, isInWatchlist],
+  );
 
-    if (trending.length === 0) {
-      return (
-        <View style={styles.emptyContainer}>
-          <View style={styles.emptyIcon}>
-            <Ionicons name="film-outline" size={32} color="#52525B" />
-          </View>
-          <Text style={styles.emptyTitle}>No Trending Content</Text>
-          <Text style={styles.emptySubtitle}>Unable to load trending shows at this moment.</Text>
-        </View>
-      );
-    }
-
+  const renderItem = useCallback(({ item, index }: { item: MediaItem; index: number }) => {
+    const mt = mediaTypeOf(item);
     return (
-      <View style={{ flex: 1, paddingHorizontal: 20 }}>
-        <Text style={styles.sectionTitle}>
-          Top 10 Trending {activeChip === 'All' ? 'Now' : activeChip}
-        </Text>
-        <FlatList
-          data={visibleTrending}
-          keyExtractor={(item) => `trending-${item.id}`}
-          numColumns={2}
-          columnWrapperStyle={{ justifyContent: 'space-between', marginBottom: 16 }}
-          renderItem={({ item, index }) => {
-            const title = item.title || item.name || 'Untitled';
-            const rating = item.vote_average ? item.vote_average.toFixed(1) : '—';
-
-            const trendingMediaType = item.media_type || (item.title ? 'movie' : 'tv');
-            return (
-              <Pressable
-                style={styles.trendingCard}
-                onPress={() => router.push({ pathname: '/content/[id]', params: { id: item.id, media_type: trendingMediaType } } as any)}
-              >
-                <Image
-                  source={{ uri: `${TMDB_IMG}${item.poster_path}` }}
-                  style={styles.trendingPoster}
-                  resizeMode="cover"
-                />
-                <LinearGradient
-                  colors={['transparent', 'rgba(0,0,0,0.85)']}
-                  locations={[0.5, 1]}
-                  style={StyleSheet.absoluteFill}
-                />
-                
-                {/* Rank Badge */}
-                <View style={styles.trendingRank}>
-                  <Text style={styles.trendingRankText}>{index + 1}</Text>
-                </View>
-
-                {/* Text overlay at bottom */}
-                <View style={styles.trendingInfo}>
-                  <Text style={styles.trendingTitle} numberOfLines={1}>{title}</Text>
-                  <View style={styles.trendingMeta}>
-                    <Ionicons name="star" size={10} color="#10B981" />
-                    <Text style={styles.trendingRating}>{rating}</Text>
-                  </View>
-                </View>
-              </Pressable>
-            );
-          }}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingBottom: 120 }}
-        />
-      </View>
+      <ResultCard
+        item={item}
+        index={index}
+        status={getItem(item.id, mt)?.status}
+        watched={getHistoryEntries(item.id, mt).length > 0}
+        saved={isInWatchlist(item.id, mt)}
+        onOpen={onOpenItem}
+        onQuickTrack={onQuickTrack}
+        onToggleSave={handleToggleWatchlist}
+      />
     );
-  };
+  }, [getItem, getHistoryEntries, isInWatchlist, onOpenItem, onQuickTrack, handleToggleWatchlist]);
 
-  // ── Empty state ──────────────────────────────────────
-  const EmptyState = () => {
+  const emptyEl = useMemo(() => {
     if (loading) return null;
-    if (!query.trim()) {
+    if (error) {
       return (
-        <View style={styles.emptyContainer}>
-          <View style={styles.emptyIcon}>
-            <Ionicons name="search" size={32} color="#10B981" />
-          </View>
-          <Text style={styles.emptyTitle}>Discover Content</Text>
-          <Text style={styles.emptySubtitle}>
-            Search for movies, series, anime, and more to add to your watchlist.
-          </Text>
-        </View>
+        <StateView
+          icon="cloud-offline-outline" tone="error"
+          title="Something went wrong"
+          subtitle="We couldn't reach TMDb. Check your connection and try again."
+          actionLabel="Retry" onAction={onRetry}
+        />
       );
     }
-    if (results.length === 0) {
+    if (results.length > 0 && year !== null && visibleResults.length === 0 && activeCount === 1) {
       return (
-        <View style={styles.emptyContainer}>
-          <View style={styles.emptyIcon}>
-            <Ionicons name="film-outline" size={32} color="#52525B" />
-          </View>
-          <Text style={styles.emptyTitle}>No Results Found</Text>
-          <Text style={styles.emptySubtitle}>
-            Try a different search term or filter.
-          </Text>
-        </View>
+        <StateView
+          icon="calendar-outline" title={`Nothing from ${year}`}
+          subtitle="Try another year or clear the year filter."
+          actionLabel="Clear year" onAction={onClearYear}
+        />
       );
     }
-    if (year !== null && visibleResults.length === 0) {
-      const serverFiltered = browseMode === 'company'
-        || (browseMode === 'search' && activeChip !== 'All' && activeChip !== 'Others');
-      return (
-        <View style={styles.emptyContainer}>
-          <View style={styles.emptyIcon}>
-            <Ionicons name="calendar-outline" size={32} color="#52525B" />
-          </View>
-          <Text style={styles.emptyTitle}>Nothing from {year}</Text>
-          <Text style={styles.emptySubtitle}>
-            {serverFiltered
-              ? 'Try another year or clear the year filter.'
-              : 'Pick Movies or Series for a full year search, or load more results.'}
-          </Text>
-          {!serverFiltered && page < totalPages && browseMode === 'search' && (
-            <Pressable onPress={loadMore} style={[styles.chip, styles.chipActive, { marginTop: 16 }]}>
-              <Text style={[styles.chipText, styles.chipTextActive]}>{loadingMore ? 'Loading…' : 'Load more results'}</Text>
-            </Pressable>
-          )}
-        </View>
-      );
-    }
-    return null;
-  };
+    return (
+      <StateView
+        icon="film-outline" title="No results found"
+        subtitle={activeCount > 0 ? 'Try loosening or clearing some filters.' : 'Try a different search term.'}
+        actionLabel={activeCount > 0 ? 'Clear filters' : undefined}
+        onAction={activeCount > 0 ? onClearAllFilters : undefined}
+      />
+    );
+  }, [loading, error, results.length, visibleResults.length, year, activeCount, onRetry, onClearYear, onClearAllFilters]);
+
+  const footerEl = useMemo(
+    () => (loadingMore ? <View style={styles.footerLoader}><ActivityIndicator size="small" color="#10B981" /></View> : null),
+    [loadingMore],
+  );
+
+  const trendingTitle = `Top 10 Trending ${activeChip === 'All' ? 'Now' : activeChip}`;
+
+  const bottomPad = 110;
+  const emptyQueryContent = (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
+      contentContainerStyle={{ paddingTop: 8, paddingBottom: bottomPad }}
+    >
+      <SearchHistory
+        history={history}
+        recentTitles={recentTitles}
+        onSelectQuery={onSelectHistory}
+        onRemoveQuery={removeQuery}
+        onClearAll={clearHistory}
+        onOpenTitle={onOpenRecent}
+      />
+      {loadingTrending && trending.length === 0 ? (
+        <View style={styles.trendingLoader}><ActivityIndicator size="large" color="#10B981" /></View>
+      ) : trendingError && trending.length === 0 ? (
+        <StateView
+          icon="cloud-offline-outline" tone="error" title="Couldn't load trending"
+          subtitle="Check your connection and try again."
+          actionLabel="Retry" onAction={onRetryTrending}
+        />
+      ) : trending.length === 0 ? (
+        <StateView icon="search" tone="accent" title="Discover content" subtitle="Search for movies, series, anime, and more to track or add to your watchlist." />
+      ) : (
+        <TrendingRow title={trendingTitle} items={trending} onOpen={onOpenItem} />
+      )}
+    </ScrollView>
+  );
 
   return (
-    <View className="flex-1 bg-black" style={{ paddingTop: insets.top }}>
+    <View className="flex-1 bg-black" style={{ paddingTop: insets.top, backgroundColor: '#000' }}>
       {/* ── Header ──────────────────────────────────── */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Search</Text>
@@ -594,18 +633,19 @@ export default function SearchScreen() {
         <View style={styles.searchBar}>
           <Ionicons name="search" size={18} color="#52525B" style={{ marginRight: 10 }} />
           <TextInput
-            ref={inputRef}
             style={styles.searchInput}
             placeholder="Movies, series, actors, directors..."
             placeholderTextColor="#52525B"
             value={query}
             onChangeText={onChangeText}
+            onSubmitEditing={onSubmit}
             returnKeyType="search"
             autoCapitalize="none"
             autoCorrect={false}
           />
+          {loading && <ActivityIndicator size="small" color="#10B981" style={{ marginLeft: 8 }} />}
           {query.length > 0 && (
-            <Pressable onPress={() => { lastParamsKey.current = ''; requestId.current++; setLoading(false); setQuery(''); setResults([]); setBrowseMode('search'); setCompanyId(null); }}>
+            <Pressable onPress={onClear} hitSlop={8} style={{ marginLeft: 8 }} accessibilityLabel="Clear search">
               <Ionicons name="close-circle" size={18} color="#52525B" />
             </Pressable>
           )}
@@ -618,6 +658,7 @@ export default function SearchScreen() {
         showsHorizontalScrollIndicator={false}
         style={styles.chipsScrollView}
         contentContainerStyle={styles.chipsContainer}
+        keyboardShouldPersistTaps="handled"
       >
         {CHIPS.map((chip) => {
           const isActive = activeChip === chip;
@@ -627,68 +668,74 @@ export default function SearchScreen() {
               style={[styles.chip, isActive && styles.chipActive]}
               onPress={() => onChipPress(chip)}
             >
-              <Text style={[styles.chipText, isActive && styles.chipTextActive]}>
-                {chip}
-              </Text>
+              <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{chip}</Text>
             </Pressable>
           );
         })}
         <View style={styles.chipDivider} />
         <Pressable
-          style={[styles.chip, styles.yearChip, year !== null && styles.chipActive]}
+          style={[styles.chip, styles.iconChip, year !== null && styles.chipActive]}
           onPress={() => setYearPickerOpen(true)}
         >
           <Ionicons name="calendar-outline" size={13} color={year !== null ? '#10B981' : '#71717A'} />
-          <Text style={[styles.chipText, year !== null && styles.chipTextActive]}>
-            {year ?? 'Year'}
-          </Text>
+          <Text style={[styles.chipText, year !== null && styles.chipTextActive]}>{year ?? 'Year'}</Text>
           {year !== null && (
-            <Pressable onPress={() => onYearChange(null)} hitSlop={8}>
+            <Pressable onPress={onClearYear} hitSlop={8}>
               <Ionicons name="close-circle" size={14} color="#10B981" />
             </Pressable>
           )}
         </Pressable>
+        <Pressable
+          style={[styles.chip, styles.iconChip, activeCount > 0 && styles.chipActive]}
+          onPress={() => setFiltersOpen(true)}
+        >
+          <Ionicons name="options-outline" size={14} color={activeCount > 0 ? '#10B981' : '#71717A'} />
+          <Text style={[styles.chipText, activeCount > 0 && styles.chipTextActive]}>Filters</Text>
+          {activeCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{activeCount}</Text>
+            </View>
+          )}
+        </Pressable>
       </ScrollView>
 
-      {/* ── Results / Trending Fallback ────────────── */}
-      {loading ? (
-        <View style={styles.loaderContainer}>
-          <ActivityIndicator size="large" color="#10B981" />
-        </View>
-      ) : !query.trim() ? (
-        renderTrendingSection()
-      ) : (
-        <FlatList
-          data={visibleResults}
-          keyExtractor={(item) => `${item.media_type || 'x'}-${item.id}`}
-          renderItem={({ item }) => (
-            <ResultRow
-              item={item}
-              isSaved={isInWatchlist(item.id, item.media_type || (item.title ? 'movie' : 'tv'))}
-              onToggleSave={handleToggleWatchlist}
-            />
-          )}
-          contentContainerStyle={{
-            paddingHorizontal: 20,
-            paddingBottom: 100,
-          }}
-          showsVerticalScrollIndicator={false}
-          onEndReached={loadMore}
-          onEndReachedThreshold={0.5}
-          ListEmptyComponent={<EmptyState />}
-          ListFooterComponent={
-            loadingMore ? (
-              <View style={{ paddingVertical: 20 }}>
-                <ActivityIndicator size="small" color="#10B981" />
-              </View>
-            ) : null
-          }
-          keyboardDismissMode="on-drag"
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
-        />
-      )}
+      <ActiveFilterChips
+        filters={filters}
+        year={year}
+        genres={genres}
+        onChange={onFiltersChange}
+        onClearYear={onClearYear}
+        onClearAll={onClearAllFilters}
+      />
 
-      {/* ── YEAR PICKER ────────────────────────── */}
+      {/* ── Results / Recent + Trending ────────────── */}
+      {showList ? (
+        loading && visibleResults.length === 0 ? (
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator size="large" color="#10B981" />
+          </View>
+        ) : (
+          <FlatList
+            data={visibleResults}
+            extraData={listExtra}
+            keyExtractor={keyOfResult}
+            renderItem={renderItem}
+            contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 6, paddingBottom: bottomPad }}
+            showsVerticalScrollIndicator={false}
+            onEndReached={loadMore}
+            onEndReachedThreshold={0.5}
+            ListEmptyComponent={emptyEl}
+            ListFooterComponent={footerEl}
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            initialNumToRender={8}
+            windowSize={9}
+          />
+        )
+      ) : emptyQueryContent}
+
+      <Snackbar message={snack?.message ?? null} nonce={snack?.nonce ?? 0} onHide={hideSnack} />
+
       <YearPickerSheet
         visible={yearPickerOpen}
         value={year}
@@ -696,62 +743,54 @@ export default function SearchScreen() {
         onClose={() => setYearPickerOpen(false)}
       />
 
-      {/* ── ADD TO WATCHLIST SHEET ─────────────── */}
+      <FiltersSheet
+        visible={filtersOpen}
+        filters={filters}
+        year={year}
+        genres={genres}
+        genresLoading={genresLoading}
+        genresError={genresError}
+        onRetryGenres={reloadGenres}
+        onApply={applyFilters}
+        onClose={() => setFiltersOpen(false)}
+      />
+
+      <QuickTrackSheet
+        visible={!!quickTarget}
+        target={quickTarget}
+        onClose={closeQuickTrack}
+        onDone={onQuickDone}
+      />
+
       <AddToWatchlistSheet
         visible={!!modalItem}
         title={modalItem?.title || modalItem?.name || ''}
-        subtitle={modalItem ? (modalItem.media_type === 'tv' || (!modalItem.title && modalItem.name) ? 'Series' : 'Movie') : undefined}
+        subtitle={modalItem ? (mediaTypeOf(modalItem) === 'tv' ? 'Series' : 'Movie') : undefined}
         loading={modalLoading}
         onConfirm={handleConfirmAdd}
-        onCancel={() => setModalItem(null)}
+        onCancel={cancelWatchlist}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 4,
-  },
-  headerTitle: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '700',
-    letterSpacing: -1,
-  },
-  searchBarContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 8,
-  },
+  header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
+  headerTitle: { color: '#FFFFFF', fontSize: 34, fontWeight: '800', letterSpacing: -1.2 },
+  searchBarContainer: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 6 },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#121212',
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#1E1E1E',
+    borderColor: 'rgba(255,255,255,0.06)',
     paddingHorizontal: 14,
-    height: 48,
+    height: 50,
   },
-  searchInput: {
-    flex: 1,
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '400',
-  },
-  chipsScrollView: {
-    flexGrow: 0,
-    flexShrink: 0,
-  },
-  chipsContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    gap: 8,
-  },
+  searchInput: { flex: 1, color: '#FFFFFF', fontSize: 15, fontWeight: '400' },
+  chipsScrollView: { flexGrow: 0, flexShrink: 0 },
+  chipsContainer: { flexDirection: 'row', paddingHorizontal: 20, paddingVertical: 10, gap: 8, alignItems: 'center' },
   chip: {
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -760,230 +799,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
   },
-  chipDivider: {
-    width: 1,
-    alignSelf: 'stretch',
-    marginVertical: 6,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+  chipDivider: { width: 1, alignSelf: 'stretch', marginVertical: 6, backgroundColor: 'rgba(255,255,255,0.1)' },
+  iconChip: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  chipActive: { backgroundColor: 'rgba(16, 185, 129, 0.15)', borderColor: 'rgba(16, 185, 129, 0.3)' },
+  chipText: { color: '#71717A', fontSize: 13, fontWeight: '600' },
+  chipTextActive: { color: '#10B981' },
+  badge: {
+    minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4,
+    backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center',
   },
-  yearChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  chipActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-  },
-  chipText: {
-    color: '#71717A',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  chipTextActive: {
-    color: '#10B981',
-  },
-  loaderContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  resultRow: {
-    flexDirection: 'row',
-    paddingVertical: 14,
-    alignItems: 'flex-start',
-  },
-  posterContainer: {
-    width: POSTER_W,
-    height: POSTER_H,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#1A1A1A',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-  },
-  poster: {
-    width: '100%',
-    height: '100%',
-  },
-  infoContainer: {
-    flex: 1,
-    paddingLeft: 14,
-    paddingRight: 8,
-    justifyContent: 'center',
-  },
-  resultTitle: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: -0.3,
-    marginBottom: 4,
-  },
-  resultPlot: {
-    color: '#A1A1AA',
-    fontSize: 12,
-    fontWeight: '400',
-    lineHeight: 17,
-    marginBottom: 8,
-  },
-  ratingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  ratingBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 9999,
-    gap: 3,
-  },
-  ratingText: {
-    color: '#10B981',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  dateText: {
-    color: '#52525B',
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  noRatingText: {
-    color: '#52525B',
-    fontSize: 11,
-    fontWeight: '500',
-    fontStyle: 'italic',
-  },
-  saveButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#1A1A1A',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    alignSelf: 'center',
-  },
-  saveButtonActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    borderColor: 'rgba(16, 185, 129, 0.2)',
-  },
-  sectionTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 16,
-    letterSpacing: -0.3,
-  },
-  trendingCard: {
-    width: (SCREEN_WIDTH - 50) / 2,
-    height: 220,
-    borderRadius: 16,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-    position: 'relative',
-  },
-  trendingPoster: {
-    width: '100%',
-    height: '100%',
-  },
-  trendingRank: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    backgroundColor: '#10B981',
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  trendingRankText: {
-    color: '#000000',
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  trendingSave: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  trendingSaveActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    borderColor: 'rgba(16, 185, 129, 0.3)',
-  },
-  trendingInfo: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 12,
-  },
-  trendingTitle: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 3,
-    letterSpacing: -0.2,
-  },
-  trendingMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-  },
-  trendingRating: {
-    color: '#10B981',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  separator: {
-    height: 1,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 80,
-    paddingHorizontal: 40,
-  },
-  emptyIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(16, 185, 129, 0.08)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  emptyTitle: {
-    color: '#E5E2E1',
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    color: '#71717A',
-    fontSize: 14,
-    fontWeight: '400',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
+  badgeText: { color: '#000', fontSize: 11, fontWeight: '800' },
+  loaderContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  trendingLoader: { height: 225, justifyContent: 'center', alignItems: 'center' },
+  footerLoader: { paddingVertical: 20 },
 });

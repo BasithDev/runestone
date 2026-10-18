@@ -10,8 +10,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useWatchlist } from '../../context/WatchlistContext';
 import { useWatching } from '../../context/WatchingContext';
-import { detectContentType, parseLocalDate, SeasonBreakdown, WatchingStatus, WATCHING_STATUS_LABELS } from '../../types';
+import { parseLocalDate, WatchingStatus, WATCHING_STATUS_LABELS } from '../../types';
 import { tmdbGet, REGION } from '../../services/tmdb';
+import { fetchTrackable } from '../../services/titleTracking';
 import { WatchlistPriority } from '../../services/watchlistStore';
 import { AddToWatchlistSheet, UpcomingToggleButton } from '../../components/lists';
 import OttInfoCard from '../../components/alerts/OttInfoCard';
@@ -214,40 +215,14 @@ export default function ContentDetailsScreen() {
     }
 
     Animated.timing(statusOpacity, { toValue: 0, duration: 150, useNativeDriver: true }).start(async () => {
-      const contentType = detectContentType(type, undefined, details.genres);
-      const seasonEpisodes: SeasonBreakdown[] = seasonDetails.map(s => ({
-        season: s.season_number,
-        episodes: s.episode_count,
-        title: s.name,
-      }));
-      const directors = type === 'movie'
-        ? (details.credits?.crew || []).filter(c => c.job === 'Director').map(c => c.name)
-        : (details.created_by || []).map(c => c.name);
-
-      // The store flips this to 'rewatching' when the title is already in history
-      await startWatching({
-        id: Date.now(),
-        tmdbId: details.id,
-        mediaType: type,
-        contentType,
-        title: details.title || details.name || '',
-        posterUrl: details.poster_path ? `https://image.tmdb.org/t/p/w342${details.poster_path}` : null,
-        year: (details.release_date || details.first_air_date || '').split('-')[0] || '',
-        status: 'watching',
-        currentSeason: type === 'tv' ? 1 : undefined,
-        currentEpisode: type === 'tv' ? 1 : undefined,
-        totalSeasons: details.number_of_seasons || undefined,
-        totalEpisodes: details.number_of_episodes || undefined,
-        episodesWatched: 0,
-        seasonEpisodes: seasonEpisodes.length > 0 ? seasonEpisodes : undefined,
-        movieCompleted: false,
-        genres: (details.genres || []).map(g => g.name),
-        rating: details.vote_average || 0,
-        runtime: details.runtime || null,
-        episodeRuntime: details.episode_run_time?.[0] || null,
-        directors: directors.length > 0 ? directors : undefined,
-        showStatus: type === 'tv' ? details.status : undefined,
-      });
+      try {
+        // Same builder as the quick-track sheet, so both paths produce identical items.
+        // The store flips status to 'rewatching' when the title is already in history.
+        await startWatching(await fetchTrackable(type, details.id));
+      } catch {
+        Animated.timing(statusOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+        return;
+      }
 
       // Remove from watchlist if present
       if (inWatchlist) removeItem(details.id, type);

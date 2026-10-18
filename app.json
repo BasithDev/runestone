@@ -51,6 +51,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "2172cdc8-e787-4205-903f-fb100cbf0b67"
+      }
+    },
+    "owner": "basith4expo"
   }
 }

@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { FONT_FAMILY } from '../../components/ui/Text';
 import Reanimated, {
   useSharedValue,
   useAnimatedStyle,
@@ -276,6 +277,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   tabLabel: {
+    fontFamily: FONT_FAMILY,
     fontSize: 10,
     fontWeight: '600',
     marginTop: 2,

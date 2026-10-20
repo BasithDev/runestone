@@ -1,7 +1,6 @@
 import React, { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   ScrollView,
-  Text,
   View,
   FlatList,
   Pressable,
@@ -9,6 +8,7 @@ import {
   StyleSheet,
   Dimensions,
 } from 'react-native';
+import { Text } from '../../components/ui/Text';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useGuardedPush, useTabBarPadding } from '../../components/navGuard';

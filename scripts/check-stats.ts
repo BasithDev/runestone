@@ -136,6 +136,49 @@ async function main() {
     await new Promise(r => setTimeout(r, 5));
     assert.strictEqual(mem.get('@runestone_watching_corrupt'), '{oops');
   });
+  const movie = { id: 1, tmdbId: 77, mediaType: 'movie', contentType: 'movie', title: 'M', status: 'watching', genres: [], rating: 0, runtime: 100 };
+  const minutesFor = (log: any[]) => log.filter((x: any) => x.tmdbId === 77).reduce((a: number, x: any) => a + x.minutes, 0);
+  const watchMovie = async () => {
+    await ws.addWatchingItem(movie);
+    await ws.patchWatchingItem(77, 'movie', { movieCompleted: true });
+    await ws.markAsCompleted(77, 'movie');
+  };
+  await test('setWatchCount adds and removes completions with their logged time', async () => {
+    mem.clear();
+    ws.resetWatchCaches();
+    await watchMovie();
+    await ws.setWatchCount(77, 'movie', 3);
+    assert.strictEqual((await ws.getWatchHistory()).length, 3);
+    assert.strictEqual(minutesFor(await ws.getWatchLog()), 300);
+    await ws.setWatchCount(77, 'movie', 1);
+    assert.strictEqual((await ws.getWatchHistory()).length, 1);
+    assert.strictEqual(minutesFor(await ws.getWatchLog()), 100);
+    await ws.setWatchCount(77, 'movie', 0); // clamps to 1
+    assert.strictEqual((await ws.getWatchHistory()).length, 1);
+  });
+  await test('setWatchCount keeps an in-progress rewatch and updates its count', async () => {
+    mem.clear();
+    ws.resetWatchCaches();
+    await watchMovie();
+    await new Promise(r => setTimeout(r, 10));
+    await ws.addWatchingItem(movie); // starts a rewatch
+    await ws.setWatchCount(77, 'movie', 2);
+    const item = await ws.getWatchingItem(77, 'movie');
+    assert.strictEqual(item.status, 'rewatching');
+    assert.strictEqual(item.rewatchCount, 2);
+  });
+  await test('remove deletes the item, its history and its watch log', async () => {
+    mem.clear();
+    ws.resetWatchCaches();
+    await watchMovie();
+    await ws.addWatchingItem(movie);
+    await ws.removeWatchingItem(77, 'movie');
+    assert.strictEqual(await ws.getWatchingItem(77, 'movie'), null);
+    assert.strictEqual((await ws.getWatchHistory()).length, 0);
+    assert.strictEqual(minutesFor(await ws.getWatchLog()), 0);
+    await ws.addWatchingItem(movie); // tracking again is a fresh first watch
+    assert.strictEqual((await ws.getWatchingItem(77, 'movie')).status, 'watching');
+  });
   await test('2000-entry log: stats compute quickly', () => {
     const big = Array.from({ length: 5000 }, (_, i) => e(day(2023, 1 + (i % 12), 1 + (i % 28)), 1, 45, i % 300));
     const t0 = Date.now();

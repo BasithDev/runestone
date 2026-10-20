@@ -1,5 +1,6 @@
 import React, { memo, useMemo } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Text } from '../ui/Text';
 import { Ionicons } from '@expo/vector-icons';
 import { SeasonBreakdown } from '../../types';
 import { watchedAtPosition } from '../../services/watchingStore';

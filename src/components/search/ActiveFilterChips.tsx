@@ -1,5 +1,6 @@
 import React, { memo, useMemo } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text } from 'react-native';
+import { Pressable, ScrollView, StyleSheet } from 'react-native';
+import { Text } from '../ui/Text';
 import { Ionicons } from '@expo/vector-icons';
 import { GenreOption } from './useGenres';
 import { SORTS, SearchFilters, languageLabel } from './types';

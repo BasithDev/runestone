@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, StyleSheet, ViewStyle } from 'react-native';
+import { View, StyleSheet, ViewStyle } from 'react-native';
+import { Text } from '../ui/Text';
 import { Ionicons } from '@expo/vector-icons';
 import { WatchingStatus, WATCHING_STATUS_LABELS } from '../../types';
 

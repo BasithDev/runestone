@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from '../ui/Text';
 import { WatchlistPriority } from '../../services/watchlistStore';
 import { priorityMeta } from '../lists/priority';
 

@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View, Text, ScrollView, Pressable,
+  View, ScrollView, Pressable,
   ActivityIndicator, FlatList, StyleSheet,
-  Animated,
+  Animated, Alert,
 } from 'react-native';
+import { Text } from '../../components/ui/Text';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useGuardedPush } from '../../components/navGuard';
@@ -200,7 +201,7 @@ export default function ContentDetailsScreen() {
   const [showModal, setShowModal] = useState(false);
 
   const { isInWatchlist, addItem, removeItem } = useWatchlist();
-  const { startWatching, getItem, getHistoryEntries } = useWatching();
+  const { startWatching, getItem, getHistoryEntries, setWatchCount, remove } = useWatching();
   const inWatchlist = details ? isInWatchlist(details.id, type) : false;
 
   // Animation for watch status
@@ -208,7 +209,10 @@ export default function ContentDetailsScreen() {
 
   // Status: watching list (its status) -> history (watched) -> not watched
   const trackedItem = getItem(Number(id), type);
-  const historyCount = getHistoryEntries(Number(id), type).length;
+  const historyEntries = getHistoryEntries(Number(id), type);
+  const historyCount = historyEntries.length;
+  const lastCompletedAt = historyEntries.reduce<string | null>(
+    (latest, h) => (!latest || h.completedAt > latest ? h.completedAt : latest), null);
 
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -263,6 +267,22 @@ export default function ContentDetailsScreen() {
       overview: details.overview || '',
     });
     setShowModal(false);
+  };
+
+  const countBusy = useRef(false);
+  const changeWatchCount = async (next: number) => {
+    if (!details || countBusy.current || next < 1) return;
+    countBusy.current = true;
+    try { await setWatchCount(details.id, type, next); } finally { countBusy.current = false; }
+  };
+
+  const confirmRemoveHistory = () => {
+    if (!details) return;
+    const name = details.title || details.name || 'This title';
+    Alert.alert('Remove completely?', `${name} and its watch history will be removed.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => { remove(details.id, type).catch(() => {}); } },
+    ]);
   };
 
   const handleRemoveFromWatchlist = async () => {
@@ -750,6 +770,41 @@ export default function ContentDetailsScreen() {
             </View>
           )}
 
+          {/* ── WATCH COUNT ───────────────────────────── */}
+          {historyCount > 0 && (
+            <View style={{ marginTop: 22 }}>
+              <SectionHeader title="Your History" />
+              <View style={s.countCard}>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.countLabel}>Times watched</Text>
+                  {lastCompletedAt ? (
+                    <Text style={s.countSub}>
+                      Last on {new Date(lastCompletedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={s.stepper}>
+                  <Pressable
+                    onPress={() => changeWatchCount(historyCount - 1)}
+                    disabled={historyCount <= 1}
+                    hitSlop={8}
+                    style={[s.stepBtn, historyCount <= 1 && { opacity: 0.35 }]}
+                  >
+                    <Ionicons name="remove" size={18} color="#fff" />
+                  </Pressable>
+                  <Text style={s.stepValue}>{historyCount}</Text>
+                  <Pressable onPress={() => changeWatchCount(historyCount + 1)} hitSlop={8} style={s.stepBtn}>
+                    <Ionicons name="add" size={18} color="#fff" />
+                  </Pressable>
+                </View>
+              </View>
+              <Pressable onPress={confirmRemoveHistory} style={s.removeHistoryBtn}>
+                <Ionicons name="trash-outline" size={15} color="#F87171" />
+                <Text style={s.removeHistoryText}>Remove from history</Text>
+              </Pressable>
+            </View>
+          )}
+
         </View>
       </ScrollView>
 
@@ -768,6 +823,27 @@ export default function ContentDetailsScreen() {
 
 // ── Styles ────────────────────────────────────────────
 const s = StyleSheet.create({
+  countCard: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#121212', borderRadius: 14, padding: 16,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+  },
+  countLabel: { color: '#E5E2E1', fontSize: 15, fontWeight: '600' },
+  countSub: { color: '#71717A', fontSize: 12, marginTop: 3 },
+  stepper: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  stepBtn: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: 'rgba(16,185,129,0.15)',
+    borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  stepValue: { color: '#10B981', fontSize: 20, fontWeight: '800', minWidth: 22, textAlign: 'center' },
+  removeHistoryBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    marginTop: 10, paddingVertical: 12, borderRadius: 14,
+    borderWidth: 1, borderColor: 'rgba(248,113,113,0.25)', backgroundColor: 'rgba(248,113,113,0.06)',
+  },
+  removeHistoryText: { color: '#F87171', fontSize: 14, fontWeight: '600' },
   backCircle: {
     position: 'absolute', left: 16,
     width: 38, height: 38, borderRadius: 19,

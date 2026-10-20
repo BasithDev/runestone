@@ -1,8 +1,9 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  FlatList, ScrollView, Text, View, Pressable, StyleSheet,
+  FlatList, ScrollView, View, Pressable, StyleSheet,
   Animated,
 } from 'react-native';
+import { Text } from '../../components/ui/Text';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGuardedPush, useTabBarPadding } from '../../components/navGuard';
 import { Ionicons } from '@expo/vector-icons';
@@ -285,6 +286,10 @@ const AwaitingCard = memo(function AwaitingCard({ item, onOpen }: { item: Watchi
 // ── Filter Chips ──────────────────────────────────────
 type FilterType = 'all' | ContentType;
 
+// In Progress holds active, on hold and dropped titles; Awaiting holds caught-up
+// shows, which pile up over time, so they get their own tab.
+type TabKey = 'progress' | 'awaiting';
+
 // ── Main Watching Screen ──────────────────────────────
 type Row =
   | { kind: 'header'; key: string; title: string; color: string; count: number; toggle?: boolean; open?: boolean }
@@ -299,6 +304,7 @@ export default function WatchingScreen() {
   const push = useGuardedPush();
   const bottomPad = useTabBarPadding(12);
   const [filter, setFilter] = useState<FilterType>('all');
+  const [tab, setTab] = useState<TabKey>('progress');
   const { watchingItems, awaitingItems, onHoldItems, droppedItems } = useWatching();
   const [droppedOpen, setDroppedOpen] = useState(false);
 
@@ -315,12 +321,16 @@ export default function WatchingScreen() {
     return () => anim.stop();
   }, [fadeIn, slideUp]);
 
-  const { counts, totalCount } = useMemo(() => {
-    const all = [...watchingItems, ...awaitingItems, ...onHoldItems, ...droppedItems];
+  const progressCount = watchingItems.length + onHoldItems.length + droppedItems.length;
+  const totalCount = progressCount + awaitingItems.length;
+
+  // Type chips count only the open tab's titles.
+  const counts = useMemo(() => {
+    const list = tab === 'awaiting' ? awaitingItems : [...watchingItems, ...onHoldItems, ...droppedItems];
     const c = new Map<ContentType, number>();
-    for (const i of all) c.set(i.contentType, (c.get(i.contentType) ?? 0) + 1);
-    return { counts: c, totalCount: all.length };
-  }, [watchingItems, awaitingItems, onHoldItems, droppedItems]);
+    for (const i of list) c.set(i.contentType, (c.get(i.contentType) ?? 0) + 1);
+    return c;
+  }, [tab, watchingItems, awaitingItems, onHoldItems, droppedItems]);
 
   // If the selected type no longer has any items (e.g. the last one was removed), fall back to All.
   useEffect(() => {
@@ -329,20 +339,25 @@ export default function WatchingScreen() {
 
   const rows = useMemo(() => {
     const pick = (list: WatchingItem[]) => (filter === 'all' ? list : list.filter(i => i.contentType === filter));
-    const w = pick(watchingItems), a = pick(awaitingItems), h = pick(onHoldItems), d = pick(droppedItems);
     const out: Row[] = [];
     const section = (id: string, title: string, color: string, list: WatchingItem[], variant: 'normal' | 'awaiting', toggle = false, open = true) => {
       if (list.length === 0) return;
       out.push({ kind: 'header', key: `h-${id}`, title, color, count: list.length, toggle, open });
       if (open) for (const item of list) out.push({ kind: 'card', key: `${id}-${cardKey(item)}`, item, variant });
     };
-    section('progress', 'In Progress', '#3B82F6', w, 'normal');
-    section('awaiting', 'Awaiting New Season', '#F59E0B', a, 'awaiting');
+    if (tab === 'awaiting') {
+      const a = pick(awaitingItems);
+      for (const item of a) out.push({ kind: 'card', key: `awaiting-${cardKey(item)}`, item, variant: 'awaiting' });
+      if (a.length === 0) out.push({ kind: 'empty', key: 'empty' });
+      return out;
+    }
+    const w = pick(watchingItems), h = pick(onHoldItems), d = pick(droppedItems);
+    section('progress', 'Watching', '#3B82F6', w, 'normal');
     section('hold', 'On Hold', '#A1A1AA', h, 'normal');
     section('dropped', 'Dropped', '#F87171', d, 'normal', true, droppedOpen);
-    if (w.length + a.length + h.length + d.length === 0) out.push({ kind: 'empty', key: 'empty' });
+    if (w.length + h.length + d.length === 0) out.push({ kind: 'empty', key: 'empty' });
     return out;
-  }, [filter, watchingItems, awaitingItems, onHoldItems, droppedItems, droppedOpen]);
+  }, [tab, filter, watchingItems, awaitingItems, onHoldItems, droppedItems, droppedOpen]);
 
   const openProgress = useCallback(
     (item: WatchingItem) => push({ pathname: '/watching-progress/[id]', params: { id: item.tmdbId, media_type: item.mediaType } }),
@@ -377,7 +392,9 @@ export default function WatchingScreen() {
           </View>
           <Text style={s.emptyTitle}>Nothing here yet</Text>
           <Text style={s.emptySubtext}>
-            No {filter === 'all' ? 'content' : CONTENT_TYPES.find(c => c.key === filter)?.label.toLowerCase()} being tracked.
+            {tab === 'awaiting'
+              ? 'Shows you catch up on wait here for their next season.'
+              : `No ${filter === 'all' ? 'content' : CONTENT_TYPES.find(c => c.key === filter)?.label.toLowerCase()} in progress.`}
           </Text>
           <Pressable onPress={goDiscover} style={s.emptyBtn}>
             <Ionicons name="search" size={15} color="#000" />
@@ -391,7 +408,7 @@ export default function WatchingScreen() {
     return wrap(r.item.mediaType === 'movie'
       ? <MovieCard item={r.item} onOpen={openProgress} />
       : <SeriesCard item={r.item} onOpen={openProgress} />);
-  }, [filter, openProgress, toggleDropped, goDiscover]);
+  }, [tab, filter, openProgress, toggleDropped, goDiscover]);
 
   const header = useMemo(() => (
     <Animated.View style={{ opacity: fadeIn, transform: [{ translateY: slideUp }] }}>
@@ -403,6 +420,22 @@ export default function WatchingScreen() {
             <Text style={s.countBadgeText}>{totalCount}</Text>
           </View>
         </View>
+      </View>
+
+      {/* ── Tabs ──────────────────────────────────── */}
+      <View style={s.segment}>
+        {([['progress', 'In Progress', progressCount], ['awaiting', 'Awaiting New Season', awaitingItems.length]] as const)
+          .map(([key, label, n]) => {
+            const active = tab === key;
+            return (
+              <Pressable key={key} style={[s.segmentBtn, active && s.segmentBtnActive]} onPress={() => setTab(key)}>
+                <Text style={[s.segmentText, active && s.segmentTextActive]} numberOfLines={1}>{label}</Text>
+                <View style={[s.segmentCount, active && s.segmentCountActive]}>
+                  <Text style={[s.segmentCountText, active && s.segmentCountTextActive]}>{n}</Text>
+                </View>
+              </Pressable>
+            );
+          })}
       </View>
 
       {/* ── Filter Chips ────────────────────────────── */}
@@ -438,7 +471,7 @@ export default function WatchingScreen() {
         })}
       </ScrollView>
     </Animated.View>
-  ), [fadeIn, slideUp, totalCount, filter, counts]);
+  ), [fadeIn, slideUp, totalCount, progressCount, awaitingItems.length, tab, filter, counts]);
 
   return (
     <FlatList
@@ -468,6 +501,23 @@ const s = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10,
   },
   countBadgeText: { color: '#10B981', fontSize: 13, fontWeight: '800' },
+
+  // Tabs
+  segment: {
+    flexDirection: 'row', marginHorizontal: 20, marginBottom: 14, padding: 3,
+    borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  segmentBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 9, paddingHorizontal: 6, borderRadius: 10,
+  },
+  segmentBtnActive: { backgroundColor: '#1F1F22' },
+  segmentText: { color: '#71717A', fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  segmentTextActive: { color: '#fff' },
+  segmentCount: { backgroundColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6 },
+  segmentCountActive: { backgroundColor: 'rgba(16,185,129,0.2)' },
+  segmentCountText: { color: '#52525B', fontSize: 11, fontWeight: '700' },
+  segmentCountTextActive: { color: '#10B981' },
 
   // Filter chips
   filterChip: {

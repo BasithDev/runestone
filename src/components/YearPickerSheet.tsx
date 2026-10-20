@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
-import { Modal, View, Text, Pressable, FlatList, StyleSheet, Dimensions } from 'react-native';
+import { Modal, View, Pressable, FlatList, StyleSheet, Dimensions } from 'react-native';
+import { Text } from './ui/Text';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 

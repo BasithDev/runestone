@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View, ViewStyle, StyleProp } from 'react-native';
+import { Animated, Pressable, StyleSheet, View, ViewStyle, StyleProp } from 'react-native';
+import { Text } from '../ui/Text';
 import { CONTENT_TYPES, ContentType, MONTH_NAMES } from '../../types';
 import { CHART_TYPE_ORDER } from '../../services/statsInsights';
 

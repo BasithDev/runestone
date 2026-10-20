@@ -1,5 +1,6 @@
 import React, { memo, useEffect, useRef } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, View } from 'react-native';
+import { Text } from '../ui/Text';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import StatusPill from '../tracking/StatusPill';

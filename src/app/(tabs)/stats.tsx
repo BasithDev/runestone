@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { ScrollView, Text, View, Pressable, StyleSheet, Modal } from 'react-native';
+import { ScrollView, View, Pressable, StyleSheet, Modal } from 'react-native';
+import { Text } from '../../components/ui/Text';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useGuardedPush } from '../../components/navGuard';
 import { Ionicons } from '@expo/vector-icons';

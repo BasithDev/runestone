@@ -1,8 +1,9 @@
 import React, { useCallback, useState, useRef, useEffect } from 'react';
 import {
-  View, Text, ScrollView, Pressable, StyleSheet,
-  Animated,
+  View, ScrollView, Pressable, StyleSheet,
+  Animated, Alert,
 } from 'react-native';
+import { Text } from '../../components/ui/Text';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -295,8 +296,13 @@ export default function WatchingProgressScreen() {
     );
   };
 
-  // Remove from watching
-  const handleRemove = () => leave(() => remove(item.tmdbId, item.mediaType));
+  // Remove completely (tracking + watch history)
+  const handleRemove = () => {
+    Alert.alert('Remove completely?', `${item.title} and its watch history will be removed.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => leave(() => remove(item.tmdbId, item.mediaType)) },
+    ]);
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Pressable, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
+import { Text } from '../components/ui/Text';
 import { useGoBack } from '../components/navGuard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';

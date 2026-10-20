@@ -3,6 +3,17 @@
 Each `## vX.Y.Z` section becomes the GitHub release notes and is shown in the
 app's "Update available" pop-up.
 
+## v1.0.1
+
+### Look & feel
+- New green Runestone icon and splash screen
+- Cleaner, Apple-style font across the app
+
+### Tracking
+- Removing a title now removes it completely, including its watch history
+- Set how many times you've watched a title from the bottom of its details page
+- Currently Watching is split into In Progress and Awaiting New Season tabs
+
 ## v1.0.0
 
 First public release.

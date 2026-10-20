@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Modal, View, Text, Pressable, TextInput, ActivityIndicator, StyleSheet,
+  Modal, View, Pressable, ActivityIndicator, StyleSheet,
   KeyboardAvoidingView,
 } from 'react-native';
+import { Text, TextInput } from '../ui/Text';
 import { Ionicons } from '@expo/vector-icons';
 import { WatchlistPriority } from '../../services/watchlistStore';
 import { PRIORITIES } from './priority';

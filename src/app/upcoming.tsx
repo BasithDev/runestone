@@ -1,8 +1,9 @@
 import React, { memo, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
-  View, Text, FlatList, Pressable,
+  View, FlatList, Pressable,
   ActivityIndicator, StyleSheet, Dimensions,
 } from 'react-native';
+import { Text } from '../components/ui/Text';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useGuardedPush } from '../components/navGuard';

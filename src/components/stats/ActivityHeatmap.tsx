@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Text } from '../ui/Text';
 import { MONTH_NAMES, WatchLogEntry } from '../../types';
 import { dailyActivity, DayActivity, formatDuration } from '../../services/statsInsights';
 import { HEAT_STEPS, SectionTitle, sh } from './shared';

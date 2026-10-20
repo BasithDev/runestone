@@ -4,8 +4,6 @@ import { useGuardedPush, useTabBarPadding } from '../../components/navGuard';
 import { localDateKey } from '../../services/watchingStore';
 import {
   View,
-  Text,
-  TextInput,
   FlatList,
   ScrollView,
   Pressable,
@@ -13,6 +11,7 @@ import {
   StyleSheet,
   Keyboard,
 } from 'react-native';
+import { Text, TextInput } from '../../components/ui/Text';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useWatchlist } from '../../context/WatchlistContext';

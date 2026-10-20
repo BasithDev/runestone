@@ -1,5 +1,6 @@
 import React, { memo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from '../ui/Text';
 import { Ionicons } from '@expo/vector-icons';
 import { WatchlistPriority } from '../../services/watchlistStore';
 import { PRIORITIES } from '../lists/priority';

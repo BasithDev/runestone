@@ -5,7 +5,7 @@ import {
 } from '../types';
 import {
   getWatchingItems, addWatchingItem, patchWatchingItem,
-  updateWatchingStatus, removeWatchingItem,
+  updateWatchingStatus, removeWatchingItem, setWatchCount,
   getWatchHistory, getWatchLog, markAsCompleted, markWatchingCaughtUp, repairCaughtUpProgress,
   putOnHold, dropWatchingItem, resumeWatchingItem, advanceWatchingItem,
   computeLifetimeStats, computePeriodStats, computeGenreStats, computeDirectorStats,
@@ -42,7 +42,10 @@ interface WatchingContextType {
   dropItem: (tmdbId: number, mediaType: string, reason: string, rating?: number | null) => Promise<void>;
   resume: (tmdbId: number, mediaType: string) => Promise<void>;
   advance: (tmdbId: number, mediaType: string) => Promise<boolean>;
+  /** Removes the title completely: tracking, watch history and logged watch time. */
   remove: (tmdbId: number, mediaType: string) => Promise<void>;
+  /** Sets how many times a watched title was completed (min 1). */
+  setWatchCount: (tmdbId: number, mediaType: string, count: number) => Promise<void>;
   isItemWatching: (tmdbId: number, mediaType: string) => boolean;
   getItem: (tmdbId: number, mediaType: string) => WatchingItem | undefined;
   getHistoryEntries: (tmdbId: number, mediaType: string) => WatchHistoryEntry[];
@@ -153,6 +156,11 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
     await reload();
   }, [reload]);
 
+  const setWatchCountCb = useCallback(async (tmdbId: number, mediaType: string, count: number) => {
+    await setWatchCount(tmdbId, mediaType, count);
+    await reload();
+  }, [reload]);
+
   const isItemWatching = useCallback((tmdbId: number, mediaType: string) => {
     return items.some(i => i.tmdbId === tmdbId && i.mediaType === mediaType);
   }, [items]);
@@ -197,6 +205,7 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
     resume: resumeCb,
     advance: advanceCb,
     remove: removeCb,
+    setWatchCount: setWatchCountCb,
     isItemWatching,
     getItem: getItemCb,
     getHistoryEntries,
@@ -207,7 +216,7 @@ export function WatchingProvider({ children }: { children: React.ReactNode }) {
     watchingItems, awaitingItems, onHoldItems, droppedItems, history, watchLog, library, loading, lifetimeStats, streak,
     availableYears, directorStats,
     startWatching, updateProgressCb, markCompletedCb, markCaughtUpCb, putOnHoldCb, dropCb, resumeCb,
-    advanceCb, removeCb, isItemWatching, getItemCb, getHistoryEntries, loadData, getPeriodStats, getGenreStats,
+    advanceCb, removeCb, setWatchCountCb, isItemWatching, getItemCb, getHistoryEntries, loadData, getPeriodStats, getGenreStats,
   ]);
 
   return <WatchingContext.Provider value={ctx}>{children}</WatchingContext.Provider>;

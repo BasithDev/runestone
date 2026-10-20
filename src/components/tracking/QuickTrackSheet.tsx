@@ -2,8 +2,9 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, Animated, Dimensions, Easing, KeyboardAvoidingView, Modal, PanResponder,
-  Pressable, ScrollView, StyleSheet, Text, View,
+  Pressable, ScrollView, StyleSheet, View,
 } from 'react-native';
+import { Text } from '../ui/Text';
 import { useGuardedPush } from '../navGuard';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -336,13 +337,13 @@ export default function QuickTrackSheet({ visible, target, onClose, onDone, onOp
 
   const confirmRemove = () => {
     if (!target) return;
-    Alert.alert('Remove from tracking?', `${name} will no longer be tracked.`, [
+    Alert.alert('Remove completely?', `${name} and its watch history will be removed.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove', style: 'destructive',
         onPress: () => run('remove', async () => {
           await remove(target.tmdbId, target.mediaType);
-          return `Removed ${name} from tracking`;
+          return `Removed ${name}`;
         }),
       },
     ]);

@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from '../ui/Text';
 import { GenreStats } from '../../types';
 import { DirectorStat } from '../../services/watchingStore';
 import { ACCENT, GrowBar, SectionTitle, sh } from './shared';

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Pressable, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import { Pressable, ActivityIndicator, StyleSheet } from 'react-native';
+import { Text } from '../ui/Text';
 import { Ionicons } from '@expo/vector-icons';
 import { useUpcoming } from '../../context/UpcomingContext';
 

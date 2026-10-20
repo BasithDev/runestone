@@ -451,10 +451,85 @@ export function advanceWatchingItem(tmdbId: number, mediaType: string): Promise<
   });
 }
 
+/**
+ * Removes a title completely: the tracked item, every completion in history
+ * and its watch-log entries, so it no longer shows as watched or counts in stats.
+ */
 export function removeWatchingItem(tmdbId: number, mediaType: string): Promise<void> {
   return serialize(async () => {
     const list = await readItems();
     await writeItems(list.filter(i => !same(i, tmdbId, mediaType)));
+    const history = await readHistory();
+    if (history.some(h => same(h, tmdbId, mediaType))) {
+      await writeHistory(history.filter(h => !same(h, tmdbId, mediaType)));
+    }
+    const log = await readLog();
+    if (log.some(e => same(e, tmdbId, mediaType))) {
+      const next = log.filter(e => !same(e, tmdbId, mediaType));
+      await AsyncStorage.setItem(WATCH_LOG_KEY, JSON.stringify(next));
+      logCache = next;
+    }
+  });
+}
+
+// A completion's log entries are written just after its history entry.
+const COMPLETION_SLACK_MS = 5000;
+
+/**
+ * Sets how many times a watched title was completed (min 1; use
+ * removeWatchingItem to clear it). Extra watches are logged now as full
+ * watches; removed ones are the latest, along with the log entries recorded
+ * for them (since the previous completion).
+ */
+export function setWatchCount(tmdbId: number, mediaType: string, count: number): Promise<void> {
+  return serialize(async () => {
+    const target = Math.max(1, Math.floor(count));
+    const history = await readHistory();
+    const mine = history.filter(h => same(h, tmdbId, mediaType))
+      .sort((a, b) => Date.parse(a.completedAt) - Date.parse(b.completedAt));
+    if (mine.length === 0 || mine.length === target) return;
+
+    if (target > mine.length) {
+      const last = mine[mine.length - 1];
+      const added: WatchHistoryEntry[] = [];
+      const logs: WatchLogEntry[] = [];
+      for (let n = mine.length; n < target; n++) {
+        const at = new Date(Date.now() + n).toISOString();
+        added.push({ ...last, id: `${last.mediaType}-${last.tmdbId}-${Date.parse(at)}`, completedAt: at, isRewatch: true });
+        if (last.mediaType === 'movie') logs.push(logEntry(last, 1, movieMinutes(last), at));
+        else if ((last.totalEpisodes ?? 0) > 0) {
+          logs.push(logEntry(last, last.totalEpisodes!, last.totalEpisodes! * episodeMinutes(last), at));
+        }
+      }
+      await writeHistory([...history, ...added]);
+      await appendLog(logs);
+    } else {
+      const removed = mine.slice(target);
+      const removedIds = new Set(removed.map(h => h.id));
+      await writeHistory(history.filter(h => !removedIds.has(h.id)));
+      // Log entries in (end of last kept completion, end of last removed one]. A
+      // completion's entries end shortly after it, never past the next one.
+      const at = (i: number) => Date.parse(mine[i].completedAt);
+      const end = (i: number) => (i + 1 < mine.length
+        ? Math.min(at(i) + COMPLETION_SLACK_MS, (at(i) + at(i + 1)) / 2)
+        : at(i) + COMPLETION_SLACK_MS);
+      const from = end(target - 1);
+      const to = end(mine.length - 1);
+      const log = await readLog();
+      const next = log.filter(e => !(same(e, tmdbId, mediaType) && Date.parse(e.at) > from && Date.parse(e.at) <= to));
+      if (next.length !== log.length) {
+        await AsyncStorage.setItem(WATCH_LOG_KEY, JSON.stringify(next));
+        logCache = next;
+      }
+    }
+
+    // A title being rewatched right now tracks how many watches came before.
+    const list = await readItems();
+    const idx = list.findIndex(i => same(i, tmdbId, mediaType));
+    if (idx !== -1) {
+      list[idx] = { ...list[idx], rewatchCount: target };
+      await writeItems(list);
+    }
   });
 }
 

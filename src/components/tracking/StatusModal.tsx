@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Modal, View, Text, TextInput, Pressable, StyleSheet,
+  Modal, View, Pressable, StyleSheet,
   KeyboardAvoidingView,
 } from 'react-native';
+import { Text, TextInput } from '../ui/Text';
 import { Ionicons } from '@expo/vector-icons';
 
 export type StatusModalMode = 'hold' | 'drop';

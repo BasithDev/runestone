@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Animated, Easing, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View, AppState,
+  Animated, Easing, Linking, Modal, Pressable, ScrollView, StyleSheet, View, AppState,
 } from 'react-native';
+import { Text } from './ui/Text';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { UpdateInfo, checkForUpdate, currentVersion, skipVersion, snoozeUpdate } from '../services/appUpdate';
